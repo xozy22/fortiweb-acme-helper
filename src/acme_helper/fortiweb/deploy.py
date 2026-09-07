@@ -175,18 +175,33 @@ def deploy_certificate(
     result = DeployResult(fortiweb=target.fortiweb, changed=False)
     lineage = Lineage.load(cfg.letsencrypt_dir / "live", cert_cfg.name)
     prev = state.get(cert_cfg.name, target.fortiweb)
-    if prev and prev.get("fingerprint") == lineage.fingerprint and not force:
+    same_cert = bool(prev and prev.get("fingerprint") == lineage.fingerprint)
+    if same_cert and prev.get("phase", "bound") == "bound" and not force:
         result.fw_cert_name = prev.get("fw_cert_name")
         result.messages.append(f"unverändert (Fingerprint {lineage.fingerprint[:16]}…, als '{prev.get('fw_cert_name')}')")
         return result
 
     client = client or FortiWebClient.from_config(target.fortiweb, cfg.fortiwebs[target.fortiweb])
     existing = set(client.list_local_certificates())
-    new_name = unique_name(target.cert_name_prefix, existing)
-    body = lineage.fullchain_pem if target.chain_mode == "fullchain" else lineage.cert_pem
-    fw_name = client.import_local_certificate(new_name, body, lineage.key_pem)
+    fw_name: str | None = None
+    # Ein früherer Versuch hat das Leaf schon hochgeladen, ist aber beim Binden gescheitert:
+    # dieselbe Datei wiederverwenden statt eine weitere Kopie anzulegen.
+    if same_cert and not force and prev.get("fw_cert_name") in existing:
+        fw_name = prev["fw_cert_name"]
+        result.messages.append(f"'{fw_name}' bereits hochgeladen, setze beim Binden fort")
+    if fw_name is None:
+        new_name = unique_name(target.cert_name_prefix, existing)
+        body = lineage.fullchain_pem if target.chain_mode == "fullchain" else lineage.cert_pem
+        fw_name = client.import_local_certificate(new_name, body, lineage.key_pem)
+        result.messages.append(f"'{fw_name}' hochgeladen (gültig bis {lineage.not_after:%Y-%m-%d})")
+        state.set(
+            cert_cfg.name,
+            target.fortiweb,
+            fingerprint=lineage.fingerprint,
+            fw_cert_name=fw_name,
+            extra={"phase": "uploaded", "not_after": lineage.not_after.isoformat()},
+        )
     result.fw_cert_name = fw_name
-    result.messages.append(f"'{fw_name}' hochgeladen (gültig bis {lineage.not_after:%Y-%m-%d})")
 
     inter_group: str | None = None
     if target.chain_mode == "intermediate-group":
@@ -212,7 +227,7 @@ def deploy_certificate(
         target.fortiweb,
         fingerprint=lineage.fingerprint,
         fw_cert_name=fw_name,
-        extra={"not_after": lineage.not_after.isoformat(), "intermediate_group": inter_group},
+        extra={"phase": "bound", "not_after": lineage.not_after.isoformat(), "intermediate_group": inter_group},
     )
     result.changed = True
     return result

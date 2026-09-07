@@ -302,25 +302,46 @@ class FortiWebClient:
         self._ensure_intermediate_endpoint()
         return [object_name(i) for i in self._list("inter_cert")]
 
+    # Feldvarianten für den Intermediate-Upload; die erste, nach der das Zertifikat in der Liste
+    # auftaucht, wird für die Sitzung gemerkt. (Ansible-Collection: uploadedFile/localPC;
+    # lokale Zertifikate nutzen certificateFile/certificate.)
+    INTER_IMPORT_VARIANTS: list[tuple[str, dict[str, str]]] = [
+        ("uploadedFile", {"type": "localPC"}),
+        ("certificateFile", {"type": "certificate"}),
+        ("uploadedFile", {}),
+        ("certificateFile", {}),
+    ]
+
     def import_intermediate_certificate(self, name: str, pem: str) -> str:
         self._ensure_intermediate_endpoint()
-        files = {"uploadedFile": (name, pem.encode(), "application/x-pem-file")}
-        res = self._request("POST", "inter_cert_import", files=files, data={"type": "localPC"})
-        effective = name
-        if isinstance(res, dict):
-            for key in ("_id", "name", "mkey"):
-                if res.get(key):
-                    effective = str(res[key])
-                    break
-        existing = self.list_intermediate_certificates()
-        if effective not in existing:
-            candidates = [c for c in existing if c.startswith(name) or name.startswith(c)]
-            if len(candidates) == 1:
-                effective = candidates[0]
-            else:
-                raise FortiWebError(f"Intermediate '{name}' nach Upload nicht gefunden")
-        log.info("FortiWeb: Intermediate-CA '%s' hochgeladen", effective)
-        return effective
+        before = set(self.list_intermediate_certificates())
+        variants = self.INTER_IMPORT_VARIANTS
+        known = getattr(self, "_inter_import_variant", None)
+        if known is not None:
+            variants = [known]
+        errors: list[str] = []
+        for field, data in variants:
+            files = {field: (name, pem.encode(), "application/x-pem-file")}
+            try:
+                self._request("POST", "inter_cert_import", files=files, data=data)
+            except FortiWebError as exc:
+                errors.append(f"{field}/{data or '-'}: {str(exc)[:160]}")
+                log.debug("Intermediate-Upload-Variante %s %s: %s", field, data, exc)
+                continue
+            after = set(self.list_intermediate_certificates())
+            new = after - before
+            effective = name if name in after else (next(iter(new)) if len(new) == 1 else None)
+            if effective:
+                self._inter_import_variant = (field, data)
+                log.info("FortiWeb: Intermediate-CA '%s' hochgeladen (Feld %s%s)", effective, field, f", {data}" if data else "")
+                return effective
+            errors.append(f"{field}/{data or '-'}: Antwort ohne Fehler, aber Zertifikat nicht in der Liste")
+        raise FortiWebError(
+            "Intermediate-CA-Upload auf dieser Firmware fehlgeschlagen. Versucht: " + "; ".join(errors) + ". "
+            "Abhilfe: im FortiWeb-GUI unter Server Objects > Certificates > Intermediate CA ein Zertifikat "
+            "hochladen und dabei in den Browser-Entwicklertools (F12, Netzwerk) Pfad und Formularfelder des "
+            "Requests ablesen, oder chain_mode auf 'fullchain' stellen (Unraid: CERT1_CHAIN_MODE=fullchain)."
+        )
 
     def delete_intermediate_certificate(self, name: str) -> None:
         self._request("DELETE", "inter_cert", params={"mkey": name})
