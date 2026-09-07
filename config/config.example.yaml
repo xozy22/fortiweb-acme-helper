@@ -42,7 +42,7 @@ fortiwebs:
     import_method: multipart   # multipart (dokumentiert) | json (certificate.local.json_cert)
     body_wrapper: data         # {"data": {...}} bei PUT/POST auf cmdb-Endpunkte; "none" für rohe Objekte
     # endpoints:               # Nur bei Abweichungen der Firmware überschreiben, siehe README
-    #   inter_cert_import: /api/v2.0/system/certificate.intermediate_ca.import_certificate
+    #   inter_cert: /api/v2.0/cmdb/system/certificate.intermediate-certificate
 
 certificates:
   - name: wildcard-example-com

@@ -1,4 +1,5 @@
 import copy
+import json
 
 import pytest
 import responses
@@ -10,6 +11,13 @@ from acme_helper.fortiweb.client import FortiWebClient
 from tests.conftest import BASE_CONFIG
 
 BASE = "https://fw.test:8443"
+INTER = f"{BASE}/api/v2.0/cmdb/system/certificate.intermediate-certificate"
+GROUP = f"{BASE}/api/v2.0/cmdb/system/certificate.intermediate-certificate-group"
+SNI = f"{BASE}/api/v2.0/cmdb/system/certificate.sni"
+
+
+def _client(**kw):
+    return FortiWebClient(host="fw.test", port=8443, username="a", password="b", verify=False, **kw)
 
 
 @pytest.mark.parametrize("bad", ["*kobiolka.com", "kobiolka", "*.", "foo..de", "-x.de"])
@@ -45,41 +53,75 @@ def test_strato_page_hints():
     assert any("identifier" in h for h in hints)
 
 
+# --- Intermediate-CA laut FortiWeb-8.0-Referenz: cmdb-Objekt mit data.name / data.certificate ---
 @responses.activate
-def test_intermediate_endpoint_discovery():
-    err = {"results": {"errcode": "-20001", "message": "The REST API has invalid URL."}}
-    responses.get(f"{BASE}/api/v2.0/system/certificate.intermediateca", json=err, status=500)
-    responses.get(f"{BASE}/api/v2.0/system/certificate.intermediate_ca", json=err, status=500)
-    responses.get(f"{BASE}/api/v2.0/system/certificate.intermediate-certificate",
-                  json={"results": [{"name": "le-abc"}]})
-    client = FortiWebClient(host="fw.test", port=8443, username="a", password="b", verify=False)
-    assert client.discover_intermediate_endpoint() == "/api/v2.0/system/certificate.intermediate-certificate"
-    assert client.endpoints["inter_cert_import"].endswith("certificate.intermediate-certificate.import_certificate")
-    assert client.list_intermediate_certificates() == ["le-abc"]
-    # zweiter Aufruf nutzt den gemerkten Pfad, kein erneutes Probieren
-    assert client.discover_intermediate_endpoint() == "/api/v2.0/system/certificate.intermediate-certificate"
+def test_intermediate_created_as_cmdb_object():
+    listed = {"names": []}
+    responses.add_callback(
+        responses.GET, INTER,
+        callback=lambda r: (200, {}, json.dumps({"results": [{"name": n} for n in listed["names"]]})),
+    )
 
+    def create(req):
+        body = json.loads(req.body)
+        assert body["data"]["name"] == "le-1234" and body["data"]["certificate"].startswith("-----BEGIN")
+        listed["names"].append("le-1234")
+        return 200, {}, '{"results": {"errcode": 0}}'
 
-@responses.activate
-def test_intermediate_discovery_all_fail():
-    err = {"results": {"errcode": "-20001", "message": "invalid URL"}}
-    for path in ("/api/v2.0/system/certificate.intermediateca", "/api/v2.0/system/certificate.intermediate_ca",
-                 "/api/v2.0/system/certificate.intermediate-certificate",
-                 "/api/v2.0/system/certificate.intermediate", "/api/v2.0/system/certificate.intermediate-ca",
-                 "/api/v2.0/system/certificate.intermediateca", "/api/v2.0/cmdb/system/certificate.intermediate-certificate",
-                 "/api/v2.0/cmdb/system/certificate.intermediate_ca"):
-        responses.get(f"{BASE}{path}", json=err, status=500)
-    client = FortiWebClient(host="fw.test", port=8443, username="a", password="b", verify=False)
-    assert client.discover_intermediate_endpoint() is None
-    with pytest.raises(FortiWebError, match="chain_mode"):
-        client.list_intermediate_certificates()
-    assert "kein Pfad gefunden" in client.probe_endpoints()["inter_cert"]
+    responses.add_callback(responses.POST, INTER, callback=create)
+    assert _client().import_intermediate_certificate("le-1234", "-----BEGIN CERTIFICATE-----\nAAA\n-----END CERTIFICATE-----") == "le-1234"
 
 
 @responses.activate
-def test_explicit_endpoint_is_not_overridden():
-    responses.get(f"{BASE}/custom/inter", json={"results": []})
-    client = FortiWebClient(host="fw.test", port=8443, username="a", password="b", verify=False,
-                            endpoints={"inter_cert": "/custom/inter"})
-    assert client.discover_intermediate_endpoint() == "/custom/inter"
-    assert client.list_intermediate_certificates() == []
+def test_intermediate_create_not_listed_is_error():
+    responses.get(INTER, json={"results": []})
+    responses.post(INTER, json={"results": {"errcode": 0}})
+    with pytest.raises(FortiWebError, match="taucht aber nicht in der Liste"):
+        _client().import_intermediate_certificate("le-1", "PEM")
+
+
+@responses.activate
+def test_group_member_added_via_put_of_whole_object():
+    group = {"name": "grp", "members": [{"id": 1, "name": "le-old", "q_ref": 1}], "q_ref": 2, "can_view": 1}
+    responses.get(GROUP, json={"results": group}, match=[responses.matchers.query_param_matcher({"mkey": "grp"})])
+    put = responses.put(GROUP, json={"results": {"errcode": 0}}, match=[responses.matchers.query_param_matcher({"mkey": "grp"})])
+    _client().add_intermediate_group_member("grp", "le-new")
+    sent = json.loads(put.calls[0].request.body)["data"]
+    assert sent["name"] == "grp" and "q_ref" not in sent and "can_view" not in sent
+    assert sent["members"] == [{"id": 1, "name": "le-old"}, {"id": 2, "name": "le-new"}]
+
+
+@responses.activate
+def test_group_member_already_present_no_put():
+    responses.get(GROUP, json={"results": {"name": "grp", "members": [{"id": 1, "name": "le-x"}]}})
+    _client().add_intermediate_group_member("grp", "le-x")
+    assert all(c.request.method == "GET" for c in responses.calls)
+
+
+@responses.activate
+def test_create_group_with_members():
+    post = responses.post(GROUP, json={"results": {"errcode": 0}})
+    _client().create_intermediate_group("grp", ["a", "b"])
+    assert json.loads(post.calls[0].request.body)["data"]["members"] == [{"id": 1, "name": "a"}, {"id": 2, "name": "b"}]
+
+
+@responses.activate
+def test_sni_member_updated_via_put_of_whole_group():
+    grp = {"name": "sni1", "members": [
+        {"id": 1, "domain": "*.example.com", "local-cert": "old", "certificate-type": "disable"},
+        {"id": 2, "domain": "other.org", "local-cert": "y"},
+    ]}
+    responses.get(SNI, json={"results": grp})
+    put = responses.put(SNI, json={"results": {"errcode": 0}})
+    c = _client()
+    members = c.list_sni_members("sni1")
+    c.update_sni_member("sni1", members[0], {"local-cert": "new", "inter-group": "chain"})
+    sent = json.loads(put.calls[0].request.body)["data"]
+    assert sent["members"][0]["local-cert"] == "new" and sent["members"][0]["inter-group"] == "chain"
+    assert sent["members"][1]["local-cert"] == "y"
+
+
+@responses.activate
+def test_explicit_endpoint_override_for_intermediate():
+    responses.get(f"{BASE}/custom/inter", json={"results": [{"name": "x"}]})
+    assert _client(endpoints={"inter_cert": "/custom/inter"}).list_intermediate_certificates() == ["x"]

@@ -1,8 +1,13 @@
 """FortiWeb REST-API-Client (v2.0, FortiWeb 7.x/8.x).
 
 Authentifizierung: Header "Authorization: <base64(JSON {username, password, vdom})>".
-Alle Pfade sind über fortiwebs.<name>.endpoints überschreibbar, weil einzelne
-Pfade zwischen Versionen abweichen können.
+
+Pfade und Body-Formate stammen aus der FortiWeb-8.0-"Configuration API"-Referenz (Swagger, basePath
+/api/v2.0/cmdb). Dort sind Intermediate-Zertifikate, Gruppen und SNI-Gruppen normale cmdb-Objekte:
+Anlegen per POST mit {"data": {...}}, Untertabellen (members) liegen im Objekt und werden per PUT des
+ganzen Objekts geändert. Nur der Upload lokaler Zertifikate nutzt den multipart-Endpunkt aus dem
+Fortinet-Community-Tip, weil dieser auf 8.0.7 nachweislich funktioniert.
+Alle Pfade sind über fortiwebs.<name>.endpoints überschreibbar.
 """
 
 from __future__ import annotations
@@ -21,32 +26,16 @@ from ..errors import FortiWebError
 log = logging.getLogger(__name__)
 
 DEFAULT_ENDPOINTS: dict[str, str] = {
-    # Lokale Server-Zertifikate
-    "local_cert": "/api/v2.0/system/certificate.local",
+    # Lokale Server-Zertifikate: Liste/Löschen/JSON-Anlage (cmdb), Upload (multipart)
+    "local_cert": "/api/v2.0/cmdb/system/certificate.local",
     "local_cert_import": "/api/v2.0/system/certificate.local.import_certificate",
-    "local_cert_json": "/api/v2.0/system/certificate.local.json_cert",
-    # Intermediate-CA-Zertifikate und Gruppen (Pfad auf FortiWeb 8.0.7 bestätigt)
-    "inter_cert": "/api/v2.0/system/certificate.intermediateca",
-    "inter_cert_import": "/api/v2.0/system/certificate.intermediateca.import_certificate",
+    # Intermediate-Zertifikate und Gruppen (cmdb, Referenz FortiWeb 8.0)
+    "inter_cert": "/api/v2.0/cmdb/system/certificate.intermediate-certificate",
     "inter_group": "/api/v2.0/cmdb/system/certificate.intermediate-certificate-group",
-    "inter_group_members": "/api/v2.0/cmdb/system/certificate.intermediate-certificate-group/members",
-    # Server Policy und SNI
+    # Server Policy und SNI (cmdb)
     "server_policy": "/api/v2.0/cmdb/server-policy/policy",
     "sni_group": "/api/v2.0/cmdb/system/certificate.sni",
-    "sni_members": "/api/v2.0/cmdb/system/certificate.sni/members",
 }
-
-# Der Pfad für Intermediate-CA-Zertifikate ist nicht für jede Firmware belegt; diese Kandidaten werden
-# beim ersten Zugriff der Reihe nach probiert (GET), der erste ohne Fehler wird verwendet.
-INTER_CERT_CANDIDATES = [
-    "/api/v2.0/system/certificate.intermediateca",
-    "/api/v2.0/system/certificate.intermediate_ca",
-    "/api/v2.0/system/certificate.intermediate-certificate",
-    "/api/v2.0/system/certificate.intermediate",
-    "/api/v2.0/system/certificate.intermediate-ca",
-    "/api/v2.0/cmdb/system/certificate.intermediate-certificate",
-    "/api/v2.0/cmdb/system/certificate.intermediate_ca",
-]
 
 # Felder, die FortiWeb bei GET mitliefert, aber bei PUT nicht akzeptiert
 READONLY_KEYS = {"q_ref", "q_type", "can_view", "can_clone", "can_delete", "can_edit"}
@@ -75,6 +64,10 @@ def set_field(obj: dict, name: str, value: Any) -> None:
     obj[name] = value
 
 
+def member_id(member: dict) -> str:
+    return str(get_field(member, "id") or get_field(member, "_id") or get_field(member, "name") or "")
+
+
 class FortiWebClient:
     def __init__(
         self,
@@ -97,10 +90,6 @@ class FortiWebClient:
         self.import_method = import_method
         self.body_wrapper = body_wrapper
         self.endpoints = {**DEFAULT_ENDPOINTS, **(endpoints or {})}
-        # Explizit konfigurierte Intermediate-Pfade werden nicht überschrieben
-        self._inter_cert_fixed = bool(endpoints and ("inter_cert" in endpoints or "inter_cert_import" in endpoints))
-        self._inter_cert_discovered = self._inter_cert_fixed
-        self._inter_cert_path: str | None = self.endpoints["inter_cert"] if self._inter_cert_fixed else None
         self.http = session or requests.Session()
         self.http.verify = verify
         if verify is False:
@@ -161,10 +150,9 @@ class FortiWebClient:
     def _wrap(self, data: dict) -> dict:
         return {"data": data} if self.body_wrapper == "data" else data
 
-    def _get_one(self, key: str, mkey: str, extra: dict | None = None) -> dict | None:
-        params = {"mkey": mkey, **(extra or {})}
+    def _get_one(self, key: str, mkey: str) -> dict | None:
         try:
-            res = self._request("GET", key, params=params)
+            res = self._request("GET", key, params={"mkey": mkey})
         except FortiWebError as exc:
             if "HTTP 404" in str(exc):
                 return None
@@ -184,66 +172,32 @@ class FortiWebClient:
             return [r for r in res if isinstance(r, dict)]
         if isinstance(res, dict):
             # Manche Endpunkte liefern {"name": {...}} oder ein einzelnes Objekt
-            if all(isinstance(v, dict) for v in res.values()) and res:
+            if res and all(isinstance(v, dict) for v in res.values()):
                 return [{"name": k, **v} for k, v in res.items()]
             return [res]
         return []
 
     def _clean_for_put(self, obj: dict) -> dict:
-        return {k: v for k, v in obj.items() if k not in READONLY_KEYS}
+        out = {k: v for k, v in obj.items() if k not in READONLY_KEYS}
+        for key, value in list(out.items()):
+            if isinstance(value, list) and value and all(isinstance(m, dict) for m in value):
+                out[key] = [{k: v for k, v in m.items() if k not in READONLY_KEYS} for m in value]
+        return out
+
+    def _put_object(self, key: str, name: str, obj: dict) -> None:
+        self._request("PUT", key, params={"mkey": name}, json=self._wrap(self._clean_for_put(obj)))
 
     # --- Verbindungstest ---------------------------------------------------
     def ping(self) -> int:
         return len(self.list_local_certificates())
 
-    def discover_intermediate_endpoint(self) -> str | None:
-        """Probiert die Kandidaten für den Intermediate-CA-Pfad durch und merkt sich den ersten Treffer."""
-        if self._inter_cert_discovered:
-            return self._inter_cert_path
-        self._inter_cert_discovered = True
-        tried: list[str] = []
-        for path in [self.endpoints["inter_cert"], *INTER_CERT_CANDIDATES]:
-            if path in tried:
-                continue
-            tried.append(path)
-            url = self.base_url + path
-            try:
-                resp = self.http.get(url, timeout=self.timeout)
-            except requests.RequestException as exc:
-                raise FortiWebError(f"FortiWeb {self.base_url} nicht erreichbar: {exc}") from exc
-            body_ok = True
-            try:
-                body = resp.json()
-                results = body.get("results", body) if isinstance(body, dict) else body
-                if isinstance(results, dict) and results.get("errcode") not in (None, 0):
-                    body_ok = False
-            except ValueError:
-                body_ok = False
-            if resp.status_code < 400 and body_ok:
-                self.endpoints["inter_cert"] = path
-                self.endpoints["inter_cert_import"] = path + ".import_certificate"
-                self._inter_cert_path = path
-                log.info("FortiWeb: Intermediate-CA-Endpunkt gefunden: %s", path)
-                return path
-            log.debug("Intermediate-Kandidat %s: HTTP %s", path, resp.status_code)
-        log.warning("FortiWeb: kein Intermediate-CA-Endpunkt gefunden (probiert: %s)", ", ".join(tried))
-        return None
-
     def probe_endpoints(self) -> dict[str, str]:
         """GET auf alle Listen-Endpunkte; liefert {key: 'ok'|Fehlertext}."""
         out: dict[str, str] = {}
-        found = self.discover_intermediate_endpoint()
         for key in ("local_cert", "inter_cert", "inter_group", "server_policy", "sni_group"):
-            if key == "inter_cert" and found is None:
-                out[key] = (
-                    "kein Pfad gefunden (probiert: " + ", ".join(INTER_CERT_CANDIDATES) + "). "
-                    "Pfad aus dem FortiWeb-GUI (Browser-Entwicklertools) unter endpoints.inter_cert eintragen "
-                    "oder chain_mode=fullchain nutzen."
-                )
-                continue
             try:
                 self._request("GET", key)
-                out[key] = "ok" + (f" ({self.endpoints[key]})" if key == "inter_cert" else "")
+                out[key] = "ok"
             except FortiWebError as exc:
                 out[key] = str(exc)[:200]
         return out
@@ -255,10 +209,13 @@ class FortiWebClient:
     def import_local_certificate(self, name: str, cert_pem: str, key_pem: str) -> str:
         """Lädt Zertifikat + Key hoch und gibt den Namen zurück, unter dem FortiWeb es führt."""
         if self.import_method == "json":
+            # cmdb-Anlage laut Referenz: name, type, certificate, private-key
             res = self._request(
                 "POST",
-                "local_cert_json",
-                json=self._wrap({"name": name, "certificate": cert_pem, "private-key": key_pem}),
+                "local_cert",
+                json=self._wrap(
+                    {"name": name, "type": "certificate", "certificate": cert_pem, "private-key": key_pem}
+                ),
             )
         else:
             files = {
@@ -273,9 +230,10 @@ class FortiWebClient:
                 if res.get(key):
                     effective = str(res[key])
                     break
-        if effective not in self.list_local_certificates():
+        existing = self.list_local_certificates()
+        if effective not in existing:
             # Manche Versionen hängen die Dateiendung an oder schneiden sie ab
-            candidates = [c for c in self.list_local_certificates() if c.startswith(name) or name.startswith(c)]
+            candidates = [c for c in existing if c.startswith(name) or name.startswith(c)]
             if len(candidates) == 1:
                 effective = candidates[0]
             else:
@@ -290,58 +248,20 @@ class FortiWebClient:
         log.info("FortiWeb: Zertifikat '%s' gelöscht", name)
 
     # --- Intermediate CA ---------------------------------------------------
-    def _ensure_intermediate_endpoint(self) -> None:
-        if self.discover_intermediate_endpoint() is None:
-            raise FortiWebError(
-                "Intermediate-CA-Endpunkt auf dieser Firmware nicht gefunden. Entweder den Pfad unter "
-                "fortiwebs.<name>.endpoints.inter_cert konfigurieren oder chain_mode auf 'fullchain' bzw. 'none' "
-                "stellen (Unraid: CERT1_CHAIN_MODE=fullchain)."
-            )
-
     def list_intermediate_certificates(self) -> list[str]:
-        self._ensure_intermediate_endpoint()
         return [object_name(i) for i in self._list("inter_cert")]
 
-    # Feldvarianten für den Intermediate-Upload; die erste, nach der das Zertifikat in der Liste
-    # auftaucht, wird für die Sitzung gemerkt. (Ansible-Collection: uploadedFile/localPC;
-    # lokale Zertifikate nutzen certificateFile/certificate.)
-    INTER_IMPORT_VARIANTS: list[tuple[str, dict[str, str]]] = [
-        ("uploadedFile", {"type": "localPC"}),
-        ("certificateFile", {"type": "certificate"}),
-        ("uploadedFile", {}),
-        ("certificateFile", {}),
-    ]
-
     def import_intermediate_certificate(self, name: str, pem: str) -> str:
-        self._ensure_intermediate_endpoint()
-        before = set(self.list_intermediate_certificates())
-        variants = self.INTER_IMPORT_VARIANTS
-        known = getattr(self, "_inter_import_variant", None)
-        if known is not None:
-            variants = [known]
-        errors: list[str] = []
-        for field, data in variants:
-            files = {field: (name, pem.encode(), "application/x-pem-file")}
-            try:
-                self._request("POST", "inter_cert_import", files=files, data=data)
-            except FortiWebError as exc:
-                errors.append(f"{field}/{data or '-'}: {str(exc)[:160]}")
-                log.debug("Intermediate-Upload-Variante %s %s: %s", field, data, exc)
-                continue
-            after = set(self.list_intermediate_certificates())
-            new = after - before
-            effective = name if name in after else (next(iter(new)) if len(new) == 1 else None)
-            if effective:
-                self._inter_import_variant = (field, data)
-                log.info("FortiWeb: Intermediate-CA '%s' hochgeladen (Feld %s%s)", effective, field, f", {data}" if data else "")
-                return effective
-            errors.append(f"{field}/{data or '-'}: Antwort ohne Fehler, aber Zertifikat nicht in der Liste")
-        raise FortiWebError(
-            "Intermediate-CA-Upload auf dieser Firmware fehlgeschlagen. Versucht: " + "; ".join(errors) + ". "
-            "Abhilfe: im FortiWeb-GUI unter Server Objects > Certificates > Intermediate CA ein Zertifikat "
-            "hochladen und dabei in den Browser-Entwicklertools (F12, Netzwerk) Pfad und Formularfelder des "
-            "Requests ablesen, oder chain_mode auf 'fullchain' stellen (Unraid: CERT1_CHAIN_MODE=fullchain)."
-        )
+        """Legt ein Intermediate-Zertifikat als cmdb-Objekt an (Referenz: data.name, data.certificate)."""
+        self._request("POST", "inter_cert", json=self._wrap({"name": name, "certificate": pem}))
+        existing = self.list_intermediate_certificates()
+        if name not in existing:
+            raise FortiWebError(
+                f"Intermediate '{name}' wurde ohne Fehler angelegt, taucht aber nicht in der Liste auf "
+                f"(vorhanden: {', '.join(existing[:10]) or '-'})"
+            )
+        log.info("FortiWeb: Intermediate-CA '%s' angelegt", name)
+        return name
 
     def delete_intermediate_certificate(self, name: str) -> None:
         self._request("DELETE", "inter_cert", params={"mkey": name})
@@ -349,19 +269,33 @@ class FortiWebClient:
     def get_intermediate_group(self, name: str) -> dict | None:
         return self._get_one("inter_group", name)
 
-    def create_intermediate_group(self, name: str) -> None:
-        self._request("POST", "inter_group", json=self._wrap({"name": name}))
+    def create_intermediate_group(self, name: str, members: list[str] | None = None) -> None:
+        data: dict = {"name": name}
+        if members:
+            data["members"] = [{"id": i, "name": m} for i, m in enumerate(members, start=1)]
+        self._request("POST", "inter_group", json=self._wrap(data))
         log.info("FortiWeb: Intermediate-CA-Gruppe '%s' angelegt", name)
 
     def list_intermediate_group_members(self, group: str) -> list[dict]:
-        return self._list("inter_group_members", params={"mkey": group})
+        grp = self.get_intermediate_group(group)
+        if grp is None:
+            raise FortiWebError(f"Intermediate-CA-Gruppe '{group}' existiert nicht")
+        members = get_field(grp, "members") or []
+        return [m for m in members if isinstance(m, dict)]
 
     def add_intermediate_group_member(self, group: str, cert_name: str) -> None:
-        self._request("POST", "inter_group_members", params={"mkey": group}, json=self._wrap({"name": cert_name}))
+        grp = self.get_intermediate_group(group)
+        if grp is None:
+            raise FortiWebError(f"Intermediate-CA-Gruppe '{group}' existiert nicht")
+        members = [m for m in (get_field(grp, "members") or []) if isinstance(m, dict)]
+        if any(str(get_field(m, "name", "")) == cert_name for m in members):
+            return
+        ids = [int(get_field(m, "id") or 0) for m in members]
+        members.append({"id": (max(ids) + 1) if ids else 1, "name": cert_name})
+        updated = dict(grp)
+        set_field(updated, "members", members)
+        self._put_object("inter_group", group, updated)
         log.info("FortiWeb: '%s' zur Intermediate-Gruppe '%s' hinzugefügt", cert_name, group)
-
-    def delete_intermediate_group_member(self, group: str, member_id: str) -> None:
-        self._request("DELETE", "inter_group_members", params={"mkey": group, "sub_mkey": member_id})
 
     # --- Server Policy -----------------------------------------------------
     def get_server_policy(self, name: str) -> dict | None:
@@ -371,10 +305,10 @@ class FortiWebClient:
         current = self.get_server_policy(name)
         if current is None:
             raise FortiWebError(f"Server Policy '{name}' existiert nicht")
-        updated = self._clean_for_put(dict(current))
+        updated = dict(current)
         for k, v in changes.items():
             set_field(updated, k, v)
-        self._request("PUT", "server_policy", params={"mkey": name}, json=self._wrap(updated))
+        self._put_object("server_policy", name, updated)
         log.info("FortiWeb: Server Policy '%s' aktualisiert (%s)", name, ", ".join(changes))
         return updated
 
@@ -383,20 +317,28 @@ class FortiWebClient:
         return self._get_one("sni_group", name)
 
     def list_sni_members(self, group: str) -> list[dict]:
-        members = self._list("sni_members", params={"mkey": group})
-        if members:
-            return members
         grp = self.get_sni_group(group)
-        if grp and isinstance(get_field(grp, "members"), list):
-            return get_field(grp, "members")
-        return []
+        if grp is None:
+            raise FortiWebError(f"SNI-Gruppe '{group}' existiert nicht")
+        members = get_field(grp, "members") or []
+        return [m for m in members if isinstance(m, dict)]
 
     def update_sni_member(self, group: str, member: dict, changes: dict) -> None:
-        member_id = str(get_field(member, "id") or get_field(member, "_id") or get_field(member, "name"))
-        updated = self._clean_for_put(dict(member))
-        for k, v in changes.items():
-            set_field(updated, k, v)
-        self._request(
-            "PUT", "sni_members", params={"mkey": group, "sub_mkey": member_id}, json=self._wrap(updated)
-        )
-        log.info("FortiWeb: SNI-Member %s/%s aktualisiert", group, member_id)
+        """Ändert einen Member und schreibt die ganze SNI-Gruppe per PUT zurück (Referenz: members im Objekt)."""
+        grp = self.get_sni_group(group)
+        if grp is None:
+            raise FortiWebError(f"SNI-Gruppe '{group}' existiert nicht")
+        target = member_id(member)
+        members = [dict(m) for m in (get_field(grp, "members") or []) if isinstance(m, dict)]
+        hit = False
+        for m in members:
+            if member_id(m) == target:
+                for k, v in changes.items():
+                    set_field(m, k, v)
+                hit = True
+        if not hit:
+            raise FortiWebError(f"SNI-Member {target} in Gruppe '{group}' nicht gefunden")
+        updated = dict(grp)
+        set_field(updated, "members", members)
+        self._put_object("sni_group", group, updated)
+        log.info("FortiWeb: SNI-Member %s/%s aktualisiert", group, target)

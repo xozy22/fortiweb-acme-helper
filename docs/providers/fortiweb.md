@@ -93,7 +93,7 @@ Firmware belegt:
 
 | Punkt | Standard | Alternative |
 |---|---|---|
-| Intermediate-CA-Liste und -Upload | wird beim ersten Zugriff automatisch ermittelt (mehrere Kandidaten, z.B. `certificate.intermediate_ca`, `certificate.intermediate-certificate`) | Meldet `check --probe` „kein Pfad gefunden“: im FortiWeb-GUI unter *Server Objects → Certificates → Intermediate CA* die Browser-Entwicklertools (F12, Reiter Netzwerk) öffnen, die Seite neu laden und den Pfad des Requests `/api/v2.0/...` unter `endpoints.inter_cert` eintragen. Oder `chain_mode: fullchain` (Unraid: `CERT1_CHAIN_MODE=fullchain`) |
+| Intermediate-CA anlegen | `POST /api/v2.0/cmdb/system/certificate.intermediate-certificate` mit `{"data": {"name", "certificate"}}` (laut 8.0-Referenz) | Pfad per `endpoints.inter_cert` überschreiben, oder `chain_mode: fullchain` (Unraid: `CERT1_CHAIN_MODE=fullchain`) |
 | Body bei cmdb-PUT | `{"data": {...}}` | `FW_BODY_WRAPPER=none` bzw. `body_wrapper: none` |
 
 `acme-helper check --probe` ruft alle Listen-Endpunkte auf und zeigt, welche antworten. Meldet ein Endpunkt 404,

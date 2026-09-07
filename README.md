@@ -279,13 +279,15 @@ Die REST-Pfade stammen aus der Fortinet-Dokumentation (Community-Tip 342766, Ans
 
 | Schlüssel | Standardpfad |
 |---|---|
-| `local_cert` | `/api/v2.0/system/certificate.local` |
-| `local_cert_import` | `/api/v2.0/system/certificate.local.import_certificate` |
-| `local_cert_json` | `/api/v2.0/system/certificate.local.json_cert` (bei `import_method: json`) |
-| `inter_cert` / `inter_cert_import` | `/api/v2.0/system/certificate.intermediate_ca[.import_certificate]` |
-| `inter_group` / `inter_group_members` | `/api/v2.0/cmdb/system/certificate.intermediate-certificate-group[/members]` |
+| `local_cert` | `/api/v2.0/cmdb/system/certificate.local` (Liste, Löschen, Anlage per JSON bei `import_method: json`) |
+| `local_cert_import` | `/api/v2.0/system/certificate.local.import_certificate` (multipart-Upload, Standard) |
+| `inter_cert` | `/api/v2.0/cmdb/system/certificate.intermediate-certificate` (Anlage per JSON `data.name`, `data.certificate`) |
+| `inter_group` | `/api/v2.0/cmdb/system/certificate.intermediate-certificate-group` (`members` im Objekt, Änderung per PUT) |
 | `server_policy` | `/api/v2.0/cmdb/server-policy/policy` |
-| `sni_group` / `sni_members` | `/api/v2.0/cmdb/system/certificate.sni[/members]` |
+| `sni_group` | `/api/v2.0/cmdb/system/certificate.sni` (`members` im Objekt, Änderung per PUT) |
+
+Die Pfade und Body-Formate entsprechen der FortiWeb-8.0-Configuration-API-Referenz (Swagger) und sind auf
+FortiWeb 8.0.7 geprüft.
 
 Weitere Stellschrauben: `body_wrapper` (`data` sendet `{"data": {...}}` bei PUT/POST, `none` das rohe Objekt) und
 `import_method` (`multipart` ist der dokumentierte Weg, `json` nutzt `json_cert`).

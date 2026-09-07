@@ -14,9 +14,12 @@ def _client(**kw):
     return FortiWebClient(host="fw.test", port=8443, username="admin", password="pw", verify=False, **kw)
 
 
+LOCAL = f"{BASE}/api/v2.0/cmdb/system/certificate.local"
+
+
 @responses.activate
 def test_auth_header_is_base64_json():
-    responses.get(f"{BASE}/api/v2.0/system/certificate.local", json={"results": [{"name": "a"}, {"_id": "b"}]})
+    responses.get(LOCAL, json={"results": [{"name": "a"}, {"_id": "b"}]})
     assert _client().list_local_certificates() == ["a", "b"]
     token = responses.calls[0].request.headers["Authorization"]
     assert json.loads(base64.b64decode(token)) == {"username": "admin", "password": "pw", "vdom": "root"}
@@ -25,7 +28,7 @@ def test_auth_header_is_base64_json():
 @responses.activate
 def test_import_multipart_returns_effective_name():
     responses.post(f"{BASE}/api/v2.0/system/certificate.local.import_certificate", json={"results": {"_id": "wc-20260907"}})
-    responses.get(f"{BASE}/api/v2.0/system/certificate.local", json={"results": [{"name": "wc-20260907"}]})
+    responses.get(LOCAL, json={"results": [{"name": "wc-20260907"}]})
     name = _client().import_local_certificate("wc-20260907", "CERT", "KEY")
     assert name == "wc-20260907"
     body = responses.calls[0].request.body
@@ -57,15 +60,31 @@ def test_body_wrapper_none():
 
 
 @responses.activate
+def test_import_json_uses_cmdb_create():
+    post = responses.post(LOCAL, json={"results": {"errcode": 0}})
+    responses.get(LOCAL, json={"results": [{"name": "wc-1"}]})
+    assert _client(import_method="json").import_local_certificate("wc-1", "CERT", "KEY") == "wc-1"
+    sent = json.loads(post.calls[0].request.body)["data"]
+    assert sent == {"name": "wc-1", "type": "certificate", "certificate": "CERT", "private-key": "KEY"}
+
+
+@responses.activate
+def test_delete_uses_cmdb_mkey():
+    d = responses.delete(LOCAL, json={"results": {"errcode": 0}}, match=[responses.matchers.query_param_matcher({"mkey": "wc-1"})])
+    _client().delete_local_certificate("wc-1")
+    assert d.call_count == 1
+
+
+@responses.activate
 def test_http_error_raises():
-    responses.get(f"{BASE}/api/v2.0/system/certificate.local", status=401, body="unauthorized")
+    responses.get(LOCAL, status=401, body="unauthorized")
     with pytest.raises(FortiWebError, match="HTTP 401"):
         _client().list_local_certificates()
 
 
 @responses.activate
 def test_errcode_raises():
-    responses.get(f"{BASE}/api/v2.0/system/certificate.local", json={"results": {"errcode": -5, "message": "nope"}})
+    responses.get(LOCAL, json={"results": {"errcode": -5, "message": "nope"}})
     with pytest.raises(FortiWebError, match="nope"):
         _client().list_local_certificates()
 
