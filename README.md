@@ -264,7 +264,7 @@ Ablauf pro `deploy`-Ziel:
 
 1. Upload als `<cert_name_prefix>-<YYYYMMDD>` (bei Kollision `-2`, `-3`, ...).
 2. `chain_mode`:
-   - `intermediate-group` (Default): Intermediates aus `chain.pem` werden als `le-<fingerprint>` hochgeladen,
+   - `intermediate-group` (Default): Intermediates aus `chain.pem` werden hochgeladen (die FortiWeb vergibt den Namen, acme-helper merkt sich Fingerprint → Name),
      in die Gruppe `<prefix>-chain` (oder `intermediate_group`) aufgenommen, und die Gruppe wird in Policy/SNI gesetzt.
    - `fullchain`: `fullchain.pem` wird als Zertifikat hochgeladen (sofern die Firmware das akzeptiert).
    - `none`: nur das Leaf.

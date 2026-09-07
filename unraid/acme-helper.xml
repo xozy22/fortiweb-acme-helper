@@ -60,7 +60,7 @@ Configuration is done entirely via the variables below (no config file needed). 
   <Config Name="FortiWeb password" Target="FW_PASS" Default="" Mode="" Description="Password of the admin account." Type="Variable" Display="always" Required="false" Mask="true"></Config>
   <Config Name="FortiWeb VDOM" Target="FW_VDOM" Default="root" Mode="" Description="Virtual domain, usually root." Type="Variable" Display="advanced" Required="false" Mask="false">root</Config>
   <Config Name="FortiWeb verify TLS" Target="FW_VERIFY_TLS" Default="false" Mode="" Description="true, false, or a path to a CA bundle inside /config (e.g. /config/fortiweb-ca.pem)." Type="Variable" Display="advanced" Required="false" Mask="false">false</Config>
-  <Config Name="FortiWeb import method" Target="FW_IMPORT_METHOD" Default="multipart" Mode="" Description="multipart (documented) or json (certificate.local.json_cert)." Type="Variable" Display="advanced" Required="false" Mask="false">multipart</Config>
+  <Config Name="FortiWeb import method" Target="FW_IMPORT_METHOD" Default="multipart" Mode="" Description="multipart (verified on 8.0.7, default) or json (create via cmdb POST with explicit name)." Type="Variable" Display="advanced" Required="false" Mask="false">multipart</Config>
   <Config Name="FortiWeb body wrapper" Target="FW_BODY_WRAPPER" Default="data" Mode="" Description="data = send {&quot;data&quot;: {...}} on cmdb PUT/POST, none = raw object. Change only if the firmware rejects updates." Type="Variable" Display="advanced" Required="false" Mask="false">data</Config>
 
   <!-- Certificate 1 -->
