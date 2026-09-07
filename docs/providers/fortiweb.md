@@ -118,23 +118,27 @@ acme-helper check
 Ein Zertifikat, das noch irgendwo referenziert ist, lehnt die FortiWeb beim Löschen ab. acme-helper protokolliert
 das als Warnung und macht weiter.
 
-## 6. Firmware-Abweichungen
+## 6. REST-API und andere Firmware-Versionen
 
-Die REST-Pfade sind in `src/acme_helper/fortiweb/client.py` (`DEFAULT_ENDPOINTS`) gesammelt und stammen aus der
-Fortinet-Dokumentation (Community Technical Tip 342766, Ansible-Collection). Zwei Punkte sind nicht für jede
-Firmware belegt:
+Die REST-Pfade sind in `src/acme_helper/fortiweb/client.py` (`DEFAULT_ENDPOINTS`) gesammelt und auf FortiWeb 8.0.7
+am Gerät verifiziert. Die vollständige Tabelle steht in der [README](../../README.md#fortiweb-rest-api-verwendete-pfade).
+Wichtig für andere Versionen: Die offizielle Configuration-API-Referenz beschreibt einige Dinge anders, als die
+Firmware sie tatsächlich verarbeitet.
 
-| Punkt | Standard | Alternative |
+| Punkt | Was die Firmware erwartet | Falls es auf deiner Version abweicht |
 |---|---|---|
-| Intermediate-CA hochladen | `POST /api/v2.0/system/certificate.intermediateca` (multipart `uploadedFile`, `type=localPC`); die FortiWeb vergibt den Namen (`Inter_Cert_N`), acme-helper merkt sich Fingerprint → Name im State. Auf 8.0.7 geprüft; der in der Referenz beschriebene JSON-POST mit PEM-Text wird mit „This certificate is invalid“ abgelehnt | Pfad per `endpoints.inter_cert_import` überschreiben, oder `chain_mode: fullchain` (Unraid: `CERT1_CHAIN_MODE=fullchain`) |
-| Body bei cmdb-PUT | `{"data": {...}}` | `FW_BODY_WRAPPER=none` bzw. `body_wrapper: none` |
+| Intermediate-CA hochladen | Multipart `POST /api/v2.0/system/certificate.intermediateca` (`uploadedFile`, `type=localPC`); Name wird vergeben (`Inter_Cert_N`). JSON-POST mit PEM-Text wird mit -7721 abgelehnt | `endpoints.inter_cert_import` überschreiben, oder `chain_mode: fullchain` (Unraid: `CERT1_CHAIN_MODE=fullchain`) |
+| Gruppen- und SNI-Member | Untertabelle `/members?mkey=<gruppe>`; Member im Objekt-PUT werden ignoriert | `endpoints.inter_group_members` / `endpoints.sni_members` überschreiben |
+| Fehlendes Objekt | HTTP 500 mit Fehlercode -3 | wird wie 404 behandelt, keine Anpassung nötig |
+| Body bei cmdb-PUT/POST | `{"data": {...}}` | `FW_BODY_WRAPPER=none` bzw. `body_wrapper: none` |
 
 Für eine neue Firmware-Version gibt es `scripts/fw_probe.py`: Es liest Zugangsdaten aus einer `.env.fwtest`, ruft
-alle Listen aus, legt Testobjekte mit Präfix `acmeprobe-` an (Intermediate, Gruppe, Member) und löscht sie wieder.
+alle Listen ab, legt Testobjekte mit Präfix `acmeprobe-` an (Intermediate, Gruppe, Member) und löscht sie wieder.
+Erst danach lohnt es sich, Pfade in `endpoints:` anzupassen.
 
-`acme-helper check --probe` ruft alle Listen-Endpunkte auf und zeigt, welche antworten. Meldet ein Endpunkt 404,
-im FortiWeb-API-Browser (`https://<fortiweb>:<port>/api/v2.0/...` im Browser mit GUI-Login) den korrekten Pfad
-suchen und in der YAML-Config unter `fortiwebs.<name>.endpoints` eintragen.
+`acme-helper check --probe` ruft alle Listen-Endpunkte auf und zeigt, welche antworten. Meldet ein Endpunkt einen
+Fehler, im FortiWeb-GUI mit den Browser-Entwicklertools (F12, Reiter Netzwerk) den Request der entsprechenden Seite
+ablesen und den Pfad in der YAML-Config unter `fortiwebs.<name>.endpoints` eintragen.
 
 ## Fehlerbilder
 

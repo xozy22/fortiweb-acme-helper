@@ -273,29 +273,35 @@ Ablauf pro `deploy`-Ziel:
 4. `sni`: Member der Gruppe, deren `domain` zu den Mustern passt, bekommen `local-cert` (und `inter-group`).
 5. Verifikation per GET, danach werden alte `<prefix>-*`-Zertifikate bis auf `keep_old` gelöscht.
 
-### FortiWeb-8.0.x: Punkte, die beim ersten Lauf zu prüfen sind
+### FortiWeb-REST-API: verwendete Pfade
 
-Die REST-Pfade stammen aus der Fortinet-Dokumentation (Community-Tip 342766, Ansible-Collection) und sind in
-`fortiweb/client.py` unter `DEFAULT_ENDPOINTS` gesammelt. Weicht die Firmware ab, lassen sie sich je FortiWeb
-über `endpoints:` überschreiben. `check --probe` ruft alle Listen-Endpunkte auf und zeigt, welche antworten.
+Alle Pfade und Body-Formate wurden auf **FortiWeb 8.0.7** direkt am Gerät verifiziert (Upload, Anlegen, Ändern,
+Löschen, Idempotenz), Grundlage waren die offizielle Configuration-API-Referenz (Swagger) und Tests mit
+`scripts/fw_probe.py`. Sie sind in `fortiweb/client.py` unter `DEFAULT_ENDPOINTS` gesammelt und lassen sich
+je FortiWeb über `endpoints:` überschreiben, falls eine andere Firmware abweicht.
 
-| Schlüssel | Standardpfad |
+| Schlüssel | Pfad und Verhalten |
 |---|---|
-| `local_cert` | `/api/v2.0/cmdb/system/certificate.local` (Liste, Löschen, Anlage per JSON bei `import_method: json`) |
-| `local_cert_import` | `/api/v2.0/system/certificate.local.import_certificate` (multipart-Upload, Standard) |
-| `inter_cert` | `/api/v2.0/cmdb/system/certificate.intermediate-certificate` (Liste, Löschen) |
-| `inter_cert_import` | `/api/v2.0/system/certificate.intermediateca` (multipart `uploadedFile`, `type=localPC`; die FortiWeb vergibt den Namen selbst, z.B. `Inter_Cert_1`) |
-| `inter_group` / `inter_group_members` | `/api/v2.0/cmdb/system/certificate.intermediate-certificate-group[/members]` (Member als Untertabelle: `?mkey=<gruppe>`, Löschen mit `&sub_mkey=<id>`) |
-| `server_policy` | `/api/v2.0/cmdb/server-policy/policy` (PUT des ganzen Objekts ohne `*_val`-, `q_*`-, `can_*`-Felder) |
-| `sni_group` / `sni_members` | `/api/v2.0/cmdb/system/certificate.sni[/members]` (Member als Untertabelle wie oben) |
+| `local_cert` | `/api/v2.0/cmdb/system/certificate.local`: Liste, Löschen, Anlegen per JSON (`import_method: json`) |
+| `local_cert_import` | `/api/v2.0/system/certificate.local.import_certificate`: Multipart-Upload von Zertifikat und Key (Standard, Name = Dateiname) |
+| `inter_cert` | `/api/v2.0/cmdb/system/certificate.intermediate-certificate`: Liste, Löschen |
+| `inter_cert_import` | `/api/v2.0/system/certificate.intermediateca`: Multipart-Upload (`uploadedFile`, `type=localPC`); die FortiWeb vergibt den Namen (`Inter_Cert_N`), acme-helper merkt sich Fingerprint → Name |
+| `inter_group` / `inter_group_members` | `/api/v2.0/cmdb/system/certificate.intermediate-certificate-group[/members]`: Member als Untertabelle (`?mkey=<gruppe>`, Löschen mit `&sub_mkey=<id>`) |
+| `server_policy` | `/api/v2.0/cmdb/server-policy/policy`: GET, Felder ändern, PUT des ganzen Objekts ohne `*_val`-, `id`-, `sz_*`-, `q_*`-, `can_*`-Felder |
+| `sni_group` / `sni_members` | `/api/v2.0/cmdb/system/certificate.sni[/members]`: Gruppe anlegen, Member als Untertabelle anlegen/ändern |
 
-Alle Pfade und Body-Formate wurden auf FortiWeb 8.0.7 gegen das Gerät geprüft (`scripts/fw_probe.py`). Die
-offizielle Configuration-API-Referenz beschreibt Intermediates als JSON-Objekt mit PEM-Text und Member als Teil des
-Objekts; beides lehnt die Firmware ab bzw. ignoriert es. Der Multipart-Upload und die Untertabellen sind der Weg,
-den auch das GUI nutzt.
+Drei Stellen weichen von der offiziellen Referenz ab und sind deshalb bewusst anders umgesetzt:
+
+- Intermediates lassen sich nicht als JSON-Objekt mit PEM-Text anlegen (Fehler -7721 „This certificate is invalid“),
+  nur per Multipart-Upload.
+- Member in `members` eines Gruppen-Objekts werden beim PUT ignoriert; sie müssen über die Untertabelle gepflegt werden.
+- Ein fehlendes Objekt liefert HTTP 500 mit Fehlercode -3 statt 404.
+
+Diagnose: `acme-helper check --probe` ruft alle Listen-Endpunkte auf, `acme-helper diag` prüft den Netzwerkweg. Für
+eine neue Firmware-Version legt `scripts/fw_probe.py` Testobjekte mit Präfix `acmeprobe-` an und löscht sie wieder.
 
 Weitere Stellschrauben: `body_wrapper` (`data` sendet `{"data": {...}}` bei PUT/POST, `none` das rohe Objekt) und
-`import_method` (`multipart` ist der dokumentierte Weg, `json` nutzt `json_cert`).
+`import_method` (`multipart` ist der geprüfte Standard, `json` legt das Zertifikat per cmdb-POST mit Name an).
 
 ## Betrieb
 
