@@ -24,14 +24,45 @@ log = logging.getLogger("acme_helper")
 
 
 # --- Kommandos -------------------------------------------------------------
+CONFIG_RETRY_SECONDS = 300
+
+
 def cmd_run(cfg: Config, args: argparse.Namespace) -> int:
+    return 1 if run_once(cfg, force_renew=args.force_renew, dry_run=args.dry_run, only=args.cert) else 0
+
+
+def run_daemon(args: argparse.Namespace) -> int:
+    """Daemon: Konfiguration wird bei jedem Lauf neu gelesen. Eine ungültige Konfiguration beendet den
+    Prozess nicht (sonst Restart-Schleife im Container), sondern wird geloggt und später erneut versucht."""
+    import time
+
+    force_first = {"pending": args.force_renew}  # --force-renew gilt nur für den ersten Lauf
+
     def job() -> None:
-        errors = run_once(cfg, force_renew=args.force_renew, dry_run=args.dry_run, only=args.cert)
+        try:
+            cfg = load_config(args.config)
+        except AcmeHelperError as exc:
+            log.error("Konfiguration ungültig, Lauf übersprungen: %s", exc)
+            log.error("Konfiguration korrigieren und Container neu starten. Die Konsole bleibt erreichbar.")
+            return
+        force = force_first["pending"]
+        force_first["pending"] = False
+        errors = run_once(cfg, force_renew=force, only=args.cert)
         log.info("Lauf abgeschlossen, Fehler: %d", errors)
 
-    if args.once or args.dry_run:
-        return 1 if run_once(cfg, force_renew=args.force_renew, dry_run=args.dry_run, only=args.cert) else 0
-    run_forever(job, cfg.schedule)
+    while True:
+        try:
+            schedule = load_config(args.config).schedule
+            break
+        except AcmeHelperError as exc:
+            log.error("Konfiguration ungültig: %s", exc)
+            log.error(
+                "Container läuft weiter, damit die Konsole erreichbar bleibt. Nächster Versuch in %d Minuten. "
+                "Konfiguration korrigieren und Container neu starten.",
+                CONFIG_RETRY_SECONDS // 60,
+            )
+            time.sleep(CONFIG_RETRY_SECONDS)
+    run_forever(job, schedule)
     return 0
 
 
@@ -354,6 +385,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.config:
         os.environ["ACME_HELPER_CONFIG"] = args.config
     try:
+        if args.command == "run" and not (args.once or args.dry_run):
+            return run_daemon(args)
         cfg = load_config(args.config)
         return int(args.func(cfg, args))
     except AcmeHelperError as exc:
