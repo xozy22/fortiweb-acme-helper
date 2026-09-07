@@ -18,9 +18,11 @@ def test_next_run_today_and_tomorrow():
 def test_schedule_time_accepts_yaml_sexagesimal():
     import yaml
 
-    raw = yaml.safe_load("time: 03:30\ntimezone: Europe/Berlin\n")
-    assert raw["time"] == 210
-    assert ScheduleConfig.model_validate(raw).time == "03:30"
+    # Ohne Anführungszeichen wird 13:30 in YAML 1.1 zur Sexagesimalzahl 810
+    raw = yaml.safe_load("time: 13:30\ntimezone: Europe/Berlin\n")
+    assert raw["time"] == 810
+    assert ScheduleConfig.model_validate(raw).time == "13:30"
+    assert ScheduleConfig.model_validate({"time": "03:30"}).time == "03:30"
 
 
 def test_pending_state_roundtrip(tmp_path):
