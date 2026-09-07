@@ -53,25 +53,88 @@ damit ein Produktionszertifikat ausgestellt und deployt wird.
 
 ## Unraid
 
-Fertiges Template: [unraid/acme-helper.xml](unraid/acme-helper.xml). Alle Einstellungen inklusive Secrets werden
-als Variablen direkt in der Unraid-Oberfläche gesetzt, eine `config.yaml` ist nicht nötig.
+acme-helper ist für Unraid als Community-Applications-Template ausgelegt: [unraid/acme-helper.xml](unraid/acme-helper.xml).
+Alle Einstellungen inklusive Secrets werden als Variablen direkt in der Unraid-Oberfläche gesetzt, eine
+`config.yaml` ist nicht nötig. Das Image `ghcr.io/xozy22/fortiweb-acme-helper:latest` wird per GitHub Actions
+für amd64 und arm64 gebaut und ist ohne Login abrufbar.
 
-Import, zwei Wege:
+### Voraussetzungen
 
-1. **Template-Datei ablegen:** XML nach `/boot/config/plugins/dockerMan/templates-user/acme-helper.xml` kopieren
-   (z.B. per SMB über die `flash`-Freigabe), danach *Docker → Add Container → Template* auswählen.
-2. **Template-Repository:** In *Apps → Settings → Template repositories* die URL
-   `https://github.com/xozy22/fortiweb-acme-helper` eintragen, danach erscheint `acme-helper` unter Apps.
+- Unraid 6.10 oder neuer mit Docker-Dienst.
+- Die FortiWeb muss vom Unraid-Host aus auf dem Admin-Port (Standard 8443) erreichbar sein, und die Unraid-IP
+  muss bei dem FortiWeb-Admin als Trusted Host eingetragen sein.
+- Zugangsdaten für mindestens einen DNS-Provider (Cloudflare-API-Token, do.de-Token oder Strato-Login).
+- Für Strato-Domains am besten vorab die CNAME-Delegation einrichten (siehe [DNS-Provider und Zonen](#dns-provider-und-zonen)).
 
-Das Image kommt aus der GitHub Container Registry: `ghcr.io/xozy22/fortiweb-acme-helper:latest`
-(gebaut per GitHub Actions für amd64 und arm64). `PUID`/`PGID` stehen im Template auf 99/100 (nobody:users),
-der Entrypoint setzt die Rechte auf `/data` entsprechend.
+### Template importieren
 
-Nach dem Start in der Container-Konsole prüfen:
+**Weg 1: Template-Repository (empfohlen)**
 
-```bash
-acme-helper check --probe
-```
+1. *Apps* öffnen, dort *Settings* (Zahnrad oben rechts).
+2. Unter *Template repositories* die URL `https://github.com/xozy22/fortiweb-acme-helper` eintragen und *Save* klicken.
+3. In *Apps* nach `acme-helper` suchen und *Install* wählen.
+
+**Weg 2: Template-Datei auf den USB-Stick**
+
+1. Die Datei [unraid/acme-helper.xml](unraid/acme-helper.xml) herunterladen.
+2. Über die Freigabe `flash` nach `/boot/config/plugins/dockerMan/templates-user/acme-helper.xml` kopieren.
+3. *Docker → Add Container* öffnen und im Dropdown *Template* den Eintrag `acme-helper` auswählen.
+
+### Variablen ausfüllen
+
+Die Maske zeigt zunächst die Pflichtfelder; *Show more settings* blendet die restlichen ein.
+
+| Feld | Was eintragen |
+|---|---|
+| ACME e-mail | Kontaktadresse für den Let's-Encrypt-Account |
+| ACME staging | `true` lassen, bis alles funktioniert |
+| Cloudflare / do.de / Strato | nur die Provider befüllen, die du nutzt; leere Felder werden ignoriert |
+| Zones | `suffix=provider`, z.B. `example.com=cf;acme.example.net=dode`. Bei nur einem Provider optional |
+| FortiWeb host / port / user / password | Admin-Zugang mit REST-API-Recht |
+| FortiWeb verify TLS | `false`, oder Pfad zu einem CA-Bundle, das du unter `/mnt/user/appdata/acme-helper/config/` ablegst |
+| Cert 1: domains | z.B. `example.com,*.example.com` |
+| Cert 1: server policies | Namen der Server-Policies, deren Zertifikat gesetzt werden soll |
+| Cert 1: SNI bindings | optional, z.B. `sni-main:*.example.com\|example.com` |
+| Notification webhook | optional, z.B. ntfy-Topic oder Slack/Teams-Webhook |
+
+Weitere Zertifikate: *Cert 2* ist im Template vorgesehen. Für noch mehr im Container-Dialog unter
+*Add another Path, Port, Variable* die Variablen `CERT3_DOMAINS`, `CERT3_POLICIES` usw. anlegen.
+
+`PUID`/`PGID` stehen auf 99/100 (nobody:users), damit `/mnt/user/appdata/acme-helper/data` mit den üblichen
+Unraid-Rechten beschrieben wird. Der Entrypoint setzt die Rechte beim Start.
+
+### Erster Start und Freigabe für Produktion
+
+1. Container starten. Er führt sofort einen Lauf aus und danach täglich um `SCHEDULE_TIME` (Standard 03:30, Zeitzone `TZ`).
+2. Im Docker-Tab auf das Container-Icon klicken und *Console* öffnen. Dort prüfen:
+
+   ```bash
+   acme-helper check --probe
+   ```
+
+   `check` zeigt Provider-Zugang, die CNAME-Auflösung jeder Domain, den FortiWeb-Login sowie ob Policies und
+   SNI-Gruppen existieren. `--probe` testet zusätzlich den Strato-Login und alle FortiWeb-Endpunkte.
+3. `acme-helper list` zeigt, ob das Staging-Zertifikat ausgestellt und auf die FortiWeb gebracht wurde. Das
+   Container-Log (*Logs* im Docker-Tab) enthält die certbot-Ausgabe und jeden Deploy-Schritt.
+4. Wenn alles passt: Variable *ACME staging* auf `false` stellen, Container speichern (Unraid startet ihn neu)
+   und einmal ein Produktionszertifikat erzwingen:
+
+   ```bash
+   acme-helper run --once --force-renew
+   ```
+
+### Betrieb auf Unraid
+
+- **Backup:** `/mnt/user/appdata/acme-helper/data` enthält Let's-Encrypt-Account, Zertifikate und den
+  Deploy-Zustand. Mit dem Appdata-Backup-Plugin sichern.
+- **Update:** Über *Docker → Check for Updates* wie bei jedem Container. Versionierte Tags (`0.1.0`, `0.1`)
+  stehen alternativ zu `latest` zur Verfügung.
+- **Nur Zertifikate holen:** *FortiWeb host* leer lassen, dann werden die Zertifikate nur unter
+  `/mnt/user/appdata/acme-helper/data/letsencrypt/live/` abgelegt.
+- **Mehrere FortiWebs oder Sonderfälle:** Eine `config.yaml` unter `/mnt/user/appdata/acme-helper/config/`
+  hat Vorrang vor den Variablen und erlaubt alle Optionen aus [config/config.example.yaml](config/config.example.yaml).
+- **Fehlersuche:** *Log level* auf `DEBUG` stellen. Bei Strato-Problemen liegt das zuletzt gesehene HTML unter
+  `/mnt/user/appdata/acme-helper/data/debug/`.
 
 ### Env-Modus (Unraid, Portainer, `docker run`)
 
