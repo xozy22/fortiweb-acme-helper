@@ -36,6 +36,16 @@ acme-helper run [--once]
   3. Warten bis zum nächsten Lauf (Daemon) bzw. Ende (--once)
 ```
 
+## Anleitungen
+
+| Thema | Dokument |
+|---|---|
+| Cloudflare: API-Token anlegen, prüfen, eintragen | [docs/providers/cloudflare.md](docs/providers/cloudflare.md) |
+| do.de: Let's-Encrypt-Token im Kundenportal, Besonderheiten der API | [docs/providers/dode.md](docs/providers/dode.md) |
+| Strato: CNAME-Delegation (empfohlen) oder Web-Login mit TOTP | [docs/providers/strato.md](docs/providers/strato.md) |
+| FortiWeb: Admin, Trusted Host, TLS, Server Policy und SNI, Firmware-Abweichungen | [docs/providers/fortiweb.md](docs/providers/fortiweb.md) |
+| Unraid: Template importieren, Variablen, erster Start | [Abschnitt Unraid](#unraid) |
+
 ## Schnellstart
 
 ```bash
@@ -64,7 +74,9 @@ für amd64 und arm64 gebaut und ist ohne Login abrufbar.
 - Die FortiWeb muss vom Unraid-Host aus auf dem Admin-Port (Standard 8443) erreichbar sein, und die Unraid-IP
   muss bei dem FortiWeb-Admin als Trusted Host eingetragen sein.
 - Zugangsdaten für mindestens einen DNS-Provider (Cloudflare-API-Token, do.de-Token oder Strato-Login).
-- Für Strato-Domains am besten vorab die CNAME-Delegation einrichten (siehe [DNS-Provider und Zonen](#dns-provider-und-zonen)).
+- Für Strato-Domains am besten vorab die CNAME-Delegation einrichten (siehe [Strato-Anleitung](docs/providers/strato.md)).
+- Schritt-für-Schritt-Anleitungen je Provider: [Cloudflare](docs/providers/cloudflare.md),
+  [do.de](docs/providers/dode.md), [Strato](docs/providers/strato.md), [FortiWeb](docs/providers/fortiweb.md).
 
 ### Template importieren
 
@@ -223,13 +235,21 @@ Der CNAME wird einmalig bei Strato gesetzt. Danach schreibt der Container die TX
 Cloudflare oder do.de (Zone `acme.example.net` in `zones` eintragen). Strato-Zugangsdaten sind dann nicht
 nötig.
 
-| Provider | Zugang | Hinweise |
-|---|---|---|
-| `cloudflare` | API-Token mit `Zone:DNS:Edit` und `Zone:Zone:Read` | Zone wird automatisch über den Namen gefunden |
-| `dode` | Let's-Encrypt-Token aus my.do.de | API kann Werte nicht einzeln löschen; Cleanup entfernt alle TXT unter dem Namen (erst nach der Validierung) |
-| `strato` | Kundennummer/Passwort, optional TOTP-Secret + Gerätename | Automatisiert den Kundenlogin. Bricht bei UI-Änderungen; das HTML landet dann unter `/data/debug` |
+| Provider | Zugang | Hinweise | Anleitung |
+|---|---|---|---|
+| `cloudflare` | API-Token mit `Zone:DNS:Edit` und `Zone:Zone:Read` | Zone wird automatisch über den Namen gefunden | [docs/providers/cloudflare.md](docs/providers/cloudflare.md) |
+| `dode` | Let's-Encrypt-Token aus my.do.de | API kann Werte nicht einzeln löschen; Cleanup entfernt alle TXT unter dem Namen (erst nach der Validierung) | [docs/providers/dode.md](docs/providers/dode.md) |
+| `strato` | Kundennummer/Passwort, optional TOTP-Secret + Gerätename | Automatisiert den Kundenlogin. Bricht bei UI-Änderungen; das HTML landet dann unter `/data/debug` | [docs/providers/strato.md](docs/providers/strato.md) |
+
+Jede Anleitung beschreibt Schritt für Schritt, wo im jeweiligen Kundenportal Token bzw. Zugangsdaten erzeugt
+werden, wie der Eintrag in acme-helper aussieht, wie man ihn mit `dns-test` prüft und welche Fehlermeldungen
+welche Ursache haben. Die Strato-Anleitung enthält die komplette CNAME-Delegation.
 
 ### FortiWeb
+
+Ausführlich in [docs/providers/fortiweb.md](docs/providers/fortiweb.md): Admin-Account mit Access Profile und
+Trusted Host, Admin-Port, TLS-Prüfung mit eigenem CA-Bundle, welche Objekte gebunden werden, Firmware-Abweichungen
+und Fehlerbilder.
 
 Voraussetzungen auf der FortiWeb:
 
