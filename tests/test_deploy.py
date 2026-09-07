@@ -35,8 +35,10 @@ class FakeFortiWeb:
         return list(self.inter)
 
     def import_intermediate_certificate(self, name, pem):
-        self.inter.append(name)
-        return name
+        # FortiWeb 8.0.7 ignoriert den Dateinamen und nummeriert selbst
+        assigned = f"Inter_Cert_{len(self.inter) + 1}"
+        self.inter.append(assigned)
+        return assigned
 
     def get_intermediate_group(self, name):
         return {"name": name} if name in self.groups else None
@@ -90,7 +92,8 @@ def test_full_deploy_flow(cfg, lineage):
     assert fw.policies["pol1"]["certificate"] == new
     assert fw.policies["pol1"]["certificate-type"] == "disable"
     assert fw.policies["pol1"]["intermediate-certificate-group"] == "wc-example-chain"
-    assert len(fw.groups["wc-example-chain"]) == 1 and fw.inter[0].startswith("le-")
+    assert len(fw.groups["wc-example-chain"]) == 1 and fw.inter == ["Inter_Cert_1"]
+    assert fw.groups["wc-example-chain"][0]["name"] == "Inter_Cert_1"
     # Nur der passende SNI-Member wurde umgestellt
     assert fw.sni["sni1"][0]["local-cert"] == new
     assert fw.sni["sni1"][1]["local-cert"] == "y"
@@ -109,6 +112,10 @@ def test_full_deploy_flow(cfg, lineage):
     assert res3.changed and res3.fw_cert_name == new + "-2"
     assert new in fw.local
     assert any("konnte nicht gelöscht" in w for w in res3.warnings)
+    # Das Intermediate wurde nicht erneut hochgeladen (Fingerprint -> Name im State)
+    assert fw.inter == ["Inter_Cert_1"]
+    assert state.intermediate_name("fw1", __import__("acme_helper.fortiweb.deploy", fromlist=["cert_fingerprint"]).cert_fingerprint(
+        (lineage / "chain.pem").read_text())) == "Inter_Cert_1"
 
 
 def test_verification_failure(cfg, lineage):

@@ -42,6 +42,8 @@ class DeployState:
         self._data: dict[str, dict[str, dict]] = _read_json(self.path, {})
 
     def get(self, cert: str, fortiweb: str) -> dict | None:
+        if cert.startswith("_"):
+            return None
         return self._data.get(cert, {}).get(fortiweb)
 
     def set(
@@ -65,6 +67,15 @@ class DeployState:
 
     def all(self) -> dict[str, dict[str, dict]]:
         return self._data
+
+    # Intermediate-Zertifikate: FortiWeb vergibt die Namen selbst, daher Fingerprint -> Name je FortiWeb.
+    # Abgelegt unter dem reservierten Schlüssel "_intermediates".
+    def intermediate_name(self, fortiweb: str, fingerprint: str) -> str | None:
+        return self._data.get("_intermediates", {}).get(fortiweb, {}).get(fingerprint)
+
+    def set_intermediate_name(self, fortiweb: str, fingerprint: str, fw_name: str) -> None:
+        self._data.setdefault("_intermediates", {}).setdefault(fortiweb, {})[fingerprint] = fw_name
+        _atomic_write(self.path, self._data)
 
 
 class PendingTxtState:

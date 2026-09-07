@@ -93,7 +93,15 @@ def sni_member_matches(member: dict, patterns: list[str]) -> bool:
     return any(fnmatch.fnmatchcase(domain, p.lower()) or domain == p.lower() for p in patterns)
 
 
-def ensure_intermediate_group(client: FortiWebClient, group: str, chain_pem: str, result: DeployResult) -> str | None:
+def ensure_intermediate_group(
+    client: FortiWebClient,
+    group: str,
+    chain_pem: str,
+    result: DeployResult,
+    *,
+    state: DeployState | None = None,
+    fortiweb: str = "",
+) -> str | None:
     certs = split_pem_certs(chain_pem)
     if not certs:
         result.warnings.append("chain.pem enthält keine Intermediates, Gruppe nicht angepasst")
@@ -102,10 +110,13 @@ def ensure_intermediate_group(client: FortiWebClient, group: str, chain_pem: str
     wanted: list[str] = []
     for pem in certs:
         fp = cert_fingerprint(pem)
-        name = f"le-{fp[:16]}"
-        if name not in existing_names:
-            name = client.import_intermediate_certificate(name, pem + "\n")
-            result.messages.append(f"Intermediate '{name}' hochgeladen")
+        # Die FortiWeb vergibt Intermediate-Namen selbst; der State merkt sich Fingerprint -> Name
+        name = state.intermediate_name(fortiweb, fp) if state else None
+        if name is None or name not in existing_names:
+            name = client.import_intermediate_certificate(f"le-{fp[:16]}", pem + "\n")
+            if state:
+                state.set_intermediate_name(fortiweb, fp, name)
+            result.messages.append(f"Intermediate hochgeladen als '{name}'")
         wanted.append(name)
     if client.get_intermediate_group(group) is None:
         client.create_intermediate_group(group)
@@ -206,7 +217,12 @@ def deploy_certificate(
     inter_group: str | None = None
     if target.chain_mode == "intermediate-group":
         inter_group = ensure_intermediate_group(
-            client, target.intermediate_group or f"{target.cert_name_prefix}-chain", lineage.chain_pem, result
+            client,
+            target.intermediate_group or f"{target.cert_name_prefix}-chain",
+            lineage.chain_pem,
+            result,
+            state=state,
+            fortiweb=target.fortiweb,
         )
 
     for policy in target.server_policies:

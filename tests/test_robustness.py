@@ -12,8 +12,10 @@ from tests.conftest import BASE_CONFIG
 
 BASE = "https://fw.test:8443"
 INTER = f"{BASE}/api/v2.0/cmdb/system/certificate.intermediate-certificate"
+INTER_UP = f"{BASE}/api/v2.0/system/certificate.intermediateca"
 GROUP = f"{BASE}/api/v2.0/cmdb/system/certificate.intermediate-certificate-group"
 SNI = f"{BASE}/api/v2.0/cmdb/system/certificate.sni"
+POLICY = f"{BASE}/api/v2.0/cmdb/server-policy/policy"
 
 
 def _client(**kw):
@@ -53,72 +55,101 @@ def test_strato_page_hints():
     assert any("identifier" in h for h in hints)
 
 
-# --- Intermediate-CA laut FortiWeb-8.0-Referenz: cmdb-Objekt mit data.name / data.certificate ---
+# --- Intermediate-CA: multipart-Upload, FortiWeb vergibt den Namen (auf 8.0.7 geprüft) ---
 @responses.activate
-def test_intermediate_created_as_cmdb_object():
-    listed = {"names": []}
+def test_intermediate_upload_returns_assigned_name():
+    listed = {"names": ["Inter_Cert_1"]}
     responses.add_callback(
         responses.GET, INTER,
         callback=lambda r: (200, {}, json.dumps({"results": [{"name": n} for n in listed["names"]]})),
     )
 
-    def create(req):
-        body = json.loads(req.body)
-        assert body["data"]["name"] == "le-1234" and body["data"]["certificate"].startswith("-----BEGIN")
-        listed["names"].append("le-1234")
-        return 200, {}, '{"results": {"errcode": 0}}'
+    def upload(req):
+        body = req.body if isinstance(req.body, bytes) else req.body.encode()
+        assert b'name="uploadedFile"' in body and b'name="type"' in body and b"localPC" in body
+        listed["names"].append("Inter_Cert_2")
+        return 200, {}, '{ "_id": "Inter_Cert_2" }'
 
-    responses.add_callback(responses.POST, INTER, callback=create)
-    assert _client().import_intermediate_certificate("le-1234", "-----BEGIN CERTIFICATE-----\nAAA\n-----END CERTIFICATE-----") == "le-1234"
+    responses.add_callback(responses.POST, INTER_UP, callback=upload)
+    assert _client().import_intermediate_certificate("le-1234", "-----BEGIN CERTIFICATE-----\nAAA\n-----END CERTIFICATE-----") == "Inter_Cert_2"
 
 
 @responses.activate
-def test_intermediate_create_not_listed_is_error():
+def test_intermediate_upload_without_id_uses_list_diff():
+    listed = {"names": []}
+    responses.add_callback(responses.GET, INTER, callback=lambda r: (200, {}, json.dumps({"results": [{"name": n} for n in listed["names"]]})))
+
+    def upload(req):
+        listed["names"].append("Inter_Cert_7")
+        return 200, {}, "ok"
+
+    responses.add_callback(responses.POST, INTER_UP, callback=upload)
+    assert _client().import_intermediate_certificate("x", "PEM") == "Inter_Cert_7"
+
+
+@responses.activate
+def test_intermediate_upload_nothing_new_is_error():
     responses.get(INTER, json={"results": []})
-    responses.post(INTER, json={"results": {"errcode": 0}})
-    with pytest.raises(FortiWebError, match="taucht aber nicht in der Liste"):
-        _client().import_intermediate_certificate("le-1", "PEM")
+    responses.post(INTER_UP, body="ok")
+    with pytest.raises(FortiWebError, match="kein eindeutiges neues Objekt"):
+        _client().import_intermediate_certificate("x", "PEM")
+
+
+GROUP_MEMBERS = GROUP + "/members"
+SNI_MEMBERS = SNI + "/members"
 
 
 @responses.activate
-def test_group_member_added_via_put_of_whole_object():
-    group = {"name": "grp", "members": [{"id": 1, "name": "le-old", "q_ref": 1}], "q_ref": 2, "can_view": 1}
-    responses.get(GROUP, json={"results": group}, match=[responses.matchers.query_param_matcher({"mkey": "grp"})])
-    put = responses.put(GROUP, json={"results": {"errcode": 0}}, match=[responses.matchers.query_param_matcher({"mkey": "grp"})])
-    _client().add_intermediate_group_member("grp", "le-new")
-    sent = json.loads(put.calls[0].request.body)["data"]
-    assert sent["name"] == "grp" and "q_ref" not in sent and "can_view" not in sent
-    assert sent["members"] == [{"id": 1, "name": "le-old"}, {"id": 2, "name": "le-new"}]
+def test_group_member_added_via_subtable_post():
+    # Antwortformat der Untertabelle wie auf 8.0.7 beobachtet
+    responses.get(GROUP_MEMBERS, json={"results": [{"seq": 1, "_id": 1, "q_type": 0, "id": "1", "name": "Inter_Cert_1", "name_val": "1722"}]},
+                  match=[responses.matchers.query_param_matcher({"mkey": "grp"})])
+    post = responses.post(GROUP_MEMBERS, json={"results": {"q_type": 0, "id": "2", "name": "Inter_Cert_2"}},
+                          match=[responses.matchers.query_param_matcher({"mkey": "grp"})])
+    _client().add_intermediate_group_member("grp", "Inter_Cert_2")
+    assert json.loads(post.calls[0].request.body) == {"data": {"name": "Inter_Cert_2"}}
 
 
 @responses.activate
-def test_group_member_already_present_no_put():
-    responses.get(GROUP, json={"results": {"name": "grp", "members": [{"id": 1, "name": "le-x"}]}})
-    _client().add_intermediate_group_member("grp", "le-x")
+def test_group_member_already_present_no_post():
+    responses.get(GROUP_MEMBERS, json={"results": [{"id": "1", "name": "Inter_Cert_1"}]})
+    _client().add_intermediate_group_member("grp", "Inter_Cert_1")
     assert all(c.request.method == "GET" for c in responses.calls)
 
 
 @responses.activate
-def test_create_group_with_members():
-    post = responses.post(GROUP, json={"results": {"errcode": 0}})
-    _client().create_intermediate_group("grp", ["a", "b"])
-    assert json.loads(post.calls[0].request.body)["data"]["members"] == [{"id": 1, "name": "a"}, {"id": 2, "name": "b"}]
+def test_group_member_delete_uses_sub_mkey():
+    d = responses.delete(GROUP_MEMBERS, json={"results": {"status": "success"}},
+                         match=[responses.matchers.query_param_matcher({"mkey": "grp", "sub_mkey": "1"})])
+    _client().delete_intermediate_group_member("grp", "1")
+    assert d.call_count == 1
 
 
 @responses.activate
-def test_sni_member_updated_via_put_of_whole_group():
-    grp = {"name": "sni1", "members": [
-        {"id": 1, "domain": "*.example.com", "local-cert": "old", "certificate-type": "disable"},
-        {"id": 2, "domain": "other.org", "local-cert": "y"},
-    ]}
-    responses.get(SNI, json={"results": grp})
-    put = responses.put(SNI, json={"results": {"errcode": 0}})
-    c = _client()
-    members = c.list_sni_members("sni1")
-    c.update_sni_member("sni1", members[0], {"local-cert": "new", "inter-group": "chain"})
+def test_policy_put_strips_val_id_and_counters():
+    pol = {"id": 1, "can_view": 0, "q_ref": 0, "can_clone": 1, "q_type": 1, "name": "pol", "ssl": "enable", "ssl_val": "1",
+           "certificate": "", "certificate_val": "", "certificate-type": "enable", "certificate-type_val": "1", "sz_members": 0}
+    responses.get(POLICY, json={"results": pol})
+    put = responses.put(POLICY, json={"results": {"errcode": 0}})
+    _client().update_server_policy("pol", {"certificate": "new", "certificate-type": "disable"})
     sent = json.loads(put.calls[0].request.body)["data"]
-    assert sent["members"][0]["local-cert"] == "new" and sent["members"][0]["inter-group"] == "chain"
-    assert sent["members"][1]["local-cert"] == "y"
+    assert sent == {"name": "pol", "ssl": "enable", "certificate": "new", "certificate-type": "disable"}
+
+
+@responses.activate
+def test_sni_member_updated_via_subtable_put():
+    members = [
+        {"seq": 1, "_id": 1, "q_type": 0, "id": "1", "domain": "*.example.com", "local-cert": "old", "local-cert_val": "old", "certificate-type": "disable"},
+        {"seq": 2, "_id": 2, "id": "2", "domain": "other.org", "local-cert": "y"},
+    ]
+    responses.get(SNI_MEMBERS, json={"results": members}, match=[responses.matchers.query_param_matcher({"mkey": "sni1"})])
+    put = responses.put(SNI_MEMBERS, json={"results": {"errcode": 0}},
+                        match=[responses.matchers.query_param_matcher({"mkey": "sni1", "sub_mkey": "1"})])
+    c = _client()
+    got = c.list_sni_members("sni1")
+    c.update_sni_member("sni1", got[0], {"local-cert": "new", "inter-group": "chain"})
+    sent = json.loads(put.calls[0].request.body)["data"]
+    assert sent == {"id": "1", "domain": "*.example.com", "local-cert": "new", "certificate-type": "disable", "inter-group": "chain"}
 
 
 @responses.activate

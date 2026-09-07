@@ -8,3 +8,5 @@ dist/
 config/config.yaml
 data/
 .pytest_cache/
+.env.fwtest
+*.pem

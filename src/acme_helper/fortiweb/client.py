@@ -29,16 +29,27 @@ DEFAULT_ENDPOINTS: dict[str, str] = {
     # Lokale Server-Zertifikate: Liste/Löschen/JSON-Anlage (cmdb), Upload (multipart)
     "local_cert": "/api/v2.0/cmdb/system/certificate.local",
     "local_cert_import": "/api/v2.0/system/certificate.local.import_certificate",
-    # Intermediate-Zertifikate und Gruppen (cmdb, Referenz FortiWeb 8.0)
+    # Intermediate-Zertifikate: Liste/Löschen (cmdb), Upload (multipart, auf 8.0.7 geprüft; die FortiWeb
+    # vergibt den Namen selbst, z.B. Inter_Cert_1), Gruppen (cmdb, members im Objekt)
     "inter_cert": "/api/v2.0/cmdb/system/certificate.intermediate-certificate",
+    "inter_cert_import": "/api/v2.0/system/certificate.intermediateca",
     "inter_group": "/api/v2.0/cmdb/system/certificate.intermediate-certificate-group",
+    # Untertabellen: GET/POST ?mkey=<gruppe>, DELETE/PUT zusätzlich &sub_mkey=<id> (auf 8.0.7 geprüft)
+    "inter_group_members": "/api/v2.0/cmdb/system/certificate.intermediate-certificate-group/members",
     # Server Policy und SNI (cmdb)
     "server_policy": "/api/v2.0/cmdb/server-policy/policy",
     "sni_group": "/api/v2.0/cmdb/system/certificate.sni",
+    "sni_members": "/api/v2.0/cmdb/system/certificate.sni/members",
 }
 
-# Felder, die FortiWeb bei GET mitliefert, aber bei PUT nicht akzeptiert
+# Felder, die FortiWeb bei GET mitliefert, aber bei PUT nicht gehören: Berechtigungs-/Referenzzähler,
+# "*_val"-Spiegelfelder, Objekt-Id und Untertabellen-Zähler (auf 8.0.7 mit einem No-op-PUT geprüft)
 READONLY_KEYS = {"q_ref", "q_type", "can_view", "can_clone", "can_delete", "can_edit"}
+TOPLEVEL_READONLY_KEYS = READONLY_KEYS | {"id", "sz_members"}
+
+
+def _strip(obj: dict, drop: set[str]) -> dict:
+    return {k: v for k, v in obj.items() if k not in drop and not k.endswith("_val")}
 
 
 def object_name(item: dict) -> str:
@@ -178,10 +189,10 @@ class FortiWebClient:
         return []
 
     def _clean_for_put(self, obj: dict) -> dict:
-        out = {k: v for k, v in obj.items() if k not in READONLY_KEYS}
+        out = _strip(obj, TOPLEVEL_READONLY_KEYS)
         for key, value in list(out.items()):
             if isinstance(value, list) and value and all(isinstance(m, dict) for m in value):
-                out[key] = [{k: v for k, v in m.items() if k not in READONLY_KEYS} for m in value]
+                out[key] = [_strip(m, READONLY_KEYS) for m in value]  # Member behalten ihre id
         return out
 
     def _put_object(self, key: str, name: str, obj: dict) -> None:
@@ -252,16 +263,32 @@ class FortiWebClient:
         return [object_name(i) for i in self._list("inter_cert")]
 
     def import_intermediate_certificate(self, name: str, pem: str) -> str:
-        """Legt ein Intermediate-Zertifikat als cmdb-Objekt an (Referenz: data.name, data.certificate)."""
-        self._request("POST", "inter_cert", json=self._wrap({"name": name, "certificate": pem}))
-        existing = self.list_intermediate_certificates()
-        if name not in existing:
-            raise FortiWebError(
-                f"Intermediate '{name}' wurde ohne Fehler angelegt, taucht aber nicht in der Liste auf "
-                f"(vorhanden: {', '.join(existing[:10]) or '-'})"
-            )
-        log.info("FortiWeb: Intermediate-CA '%s' angelegt", name)
-        return name
+        """Lädt ein Intermediate-Zertifikat hoch und gibt den Namen zurück, den die FortiWeb vergeben hat.
+
+        Auf 8.0.7 ignoriert die FortiWeb den Dateinamen und nummeriert selbst (Inter_Cert_1, ...).
+        Der cmdb-POST mit PEM-Text aus der Referenz wird mit "This certificate is invalid" abgelehnt.
+        """
+        before = set(self.list_intermediate_certificates())
+        files = {"uploadedFile": (name, pem.encode(), "application/x-pem-file")}
+        res = self._request("POST", "inter_cert_import", files=files, data={"type": "localPC"})
+        effective: str | None = None
+        if isinstance(res, dict):
+            for key in ("_id", "name", "mkey"):
+                if res.get(key):
+                    effective = str(res[key])
+                    break
+        after = set(self.list_intermediate_certificates())
+        if effective is None or effective not in after:
+            new = after - before
+            if len(new) == 1:
+                effective = next(iter(new))
+            else:
+                raise FortiWebError(
+                    f"Intermediate-Upload: Antwort {str(res)[:120]}, aber kein eindeutiges neues Objekt in der Liste "
+                    f"(neu: {sorted(new) or '-'})"
+                )
+        log.info("FortiWeb: Intermediate-CA hochgeladen als '%s'", effective)
+        return effective
 
     def delete_intermediate_certificate(self, name: str) -> None:
         self._request("DELETE", "inter_cert", params={"mkey": name})
@@ -277,25 +304,16 @@ class FortiWebClient:
         log.info("FortiWeb: Intermediate-CA-Gruppe '%s' angelegt", name)
 
     def list_intermediate_group_members(self, group: str) -> list[dict]:
-        grp = self.get_intermediate_group(group)
-        if grp is None:
-            raise FortiWebError(f"Intermediate-CA-Gruppe '{group}' existiert nicht")
-        members = get_field(grp, "members") or []
-        return [m for m in members if isinstance(m, dict)]
+        return self._list("inter_group_members", params={"mkey": group})
 
     def add_intermediate_group_member(self, group: str, cert_name: str) -> None:
-        grp = self.get_intermediate_group(group)
-        if grp is None:
-            raise FortiWebError(f"Intermediate-CA-Gruppe '{group}' existiert nicht")
-        members = [m for m in (get_field(grp, "members") or []) if isinstance(m, dict)]
-        if any(str(get_field(m, "name", "")) == cert_name for m in members):
+        if any(str(get_field(m, "name", "")) == cert_name for m in self.list_intermediate_group_members(group)):
             return
-        ids = [int(get_field(m, "id") or 0) for m in members]
-        members.append({"id": (max(ids) + 1) if ids else 1, "name": cert_name})
-        updated = dict(grp)
-        set_field(updated, "members", members)
-        self._put_object("inter_group", group, updated)
+        self._request("POST", "inter_group_members", params={"mkey": group}, json=self._wrap({"name": cert_name}))
         log.info("FortiWeb: '%s' zur Intermediate-Gruppe '%s' hinzugefügt", cert_name, group)
+
+    def delete_intermediate_group_member(self, group: str, member_id: str) -> None:
+        self._request("DELETE", "inter_group_members", params={"mkey": group, "sub_mkey": member_id})
 
     # --- Server Policy -----------------------------------------------------
     def get_server_policy(self, name: str) -> dict | None:
@@ -317,28 +335,18 @@ class FortiWebClient:
         return self._get_one("sni_group", name)
 
     def list_sni_members(self, group: str) -> list[dict]:
-        grp = self.get_sni_group(group)
-        if grp is None:
-            raise FortiWebError(f"SNI-Gruppe '{group}' existiert nicht")
-        members = get_field(grp, "members") or []
-        return [m for m in members if isinstance(m, dict)]
+        return self._list("sni_members", params={"mkey": group})
 
     def update_sni_member(self, group: str, member: dict, changes: dict) -> None:
-        """Ändert einen Member und schreibt die ganze SNI-Gruppe per PUT zurück (Referenz: members im Objekt)."""
-        grp = self.get_sni_group(group)
-        if grp is None:
-            raise FortiWebError(f"SNI-Gruppe '{group}' existiert nicht")
+        """Ändert einen SNI-Member über die Untertabelle (PUT ?mkey=<gruppe>&sub_mkey=<id>)."""
         target = member_id(member)
-        members = [dict(m) for m in (get_field(grp, "members") or []) if isinstance(m, dict)]
-        hit = False
-        for m in members:
-            if member_id(m) == target:
-                for k, v in changes.items():
-                    set_field(m, k, v)
-                hit = True
-        if not hit:
-            raise FortiWebError(f"SNI-Member {target} in Gruppe '{group}' nicht gefunden")
-        updated = dict(grp)
-        set_field(updated, "members", members)
-        self._put_object("sni_group", group, updated)
+        updated = dict(member)
+        for k, v in changes.items():
+            set_field(updated, k, v)
+        self._request(
+            "PUT",
+            "sni_members",
+            params={"mkey": group, "sub_mkey": target},
+            json=self._wrap(_strip(updated, READONLY_KEYS | {"seq", "_id"})),
+        )
         log.info("FortiWeb: SNI-Member %s/%s aktualisiert", group, target)

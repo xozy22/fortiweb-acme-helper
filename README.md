@@ -281,13 +281,16 @@ Die REST-Pfade stammen aus der Fortinet-Dokumentation (Community-Tip 342766, Ans
 |---|---|
 | `local_cert` | `/api/v2.0/cmdb/system/certificate.local` (Liste, Löschen, Anlage per JSON bei `import_method: json`) |
 | `local_cert_import` | `/api/v2.0/system/certificate.local.import_certificate` (multipart-Upload, Standard) |
-| `inter_cert` | `/api/v2.0/cmdb/system/certificate.intermediate-certificate` (Anlage per JSON `data.name`, `data.certificate`) |
-| `inter_group` | `/api/v2.0/cmdb/system/certificate.intermediate-certificate-group` (`members` im Objekt, Änderung per PUT) |
-| `server_policy` | `/api/v2.0/cmdb/server-policy/policy` |
-| `sni_group` | `/api/v2.0/cmdb/system/certificate.sni` (`members` im Objekt, Änderung per PUT) |
+| `inter_cert` | `/api/v2.0/cmdb/system/certificate.intermediate-certificate` (Liste, Löschen) |
+| `inter_cert_import` | `/api/v2.0/system/certificate.intermediateca` (multipart `uploadedFile`, `type=localPC`; die FortiWeb vergibt den Namen selbst, z.B. `Inter_Cert_1`) |
+| `inter_group` / `inter_group_members` | `/api/v2.0/cmdb/system/certificate.intermediate-certificate-group[/members]` (Member als Untertabelle: `?mkey=<gruppe>`, Löschen mit `&sub_mkey=<id>`) |
+| `server_policy` | `/api/v2.0/cmdb/server-policy/policy` (PUT des ganzen Objekts ohne `*_val`-, `q_*`-, `can_*`-Felder) |
+| `sni_group` / `sni_members` | `/api/v2.0/cmdb/system/certificate.sni[/members]` (Member als Untertabelle wie oben) |
 
-Die Pfade und Body-Formate entsprechen der FortiWeb-8.0-Configuration-API-Referenz (Swagger) und sind auf
-FortiWeb 8.0.7 geprüft.
+Alle Pfade und Body-Formate wurden auf FortiWeb 8.0.7 gegen das Gerät geprüft (`scripts/fw_probe.py`). Die
+offizielle Configuration-API-Referenz beschreibt Intermediates als JSON-Objekt mit PEM-Text und Member als Teil des
+Objekts; beides lehnt die Firmware ab bzw. ignoriert es. Der Multipart-Upload und die Untertabellen sind der Weg,
+den auch das GUI nutzt.
 
 Weitere Stellschrauben: `body_wrapper` (`data` sendet `{"data": {...}}` bei PUT/POST, `none` das rohe Objekt) und
 `import_method` (`multipart` ist der dokumentierte Weg, `json` nutzt `json_cert`).

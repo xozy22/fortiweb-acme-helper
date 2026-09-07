@@ -93,8 +93,11 @@ Firmware belegt:
 
 | Punkt | Standard | Alternative |
 |---|---|---|
-| Intermediate-CA anlegen | `POST /api/v2.0/cmdb/system/certificate.intermediate-certificate` mit `{"data": {"name", "certificate"}}` (laut 8.0-Referenz) | Pfad per `endpoints.inter_cert` überschreiben, oder `chain_mode: fullchain` (Unraid: `CERT1_CHAIN_MODE=fullchain`) |
+| Intermediate-CA hochladen | `POST /api/v2.0/system/certificate.intermediateca` (multipart `uploadedFile`, `type=localPC`); die FortiWeb vergibt den Namen (`Inter_Cert_N`), acme-helper merkt sich Fingerprint → Name im State. Auf 8.0.7 geprüft; der in der Referenz beschriebene JSON-POST mit PEM-Text wird mit „This certificate is invalid“ abgelehnt | Pfad per `endpoints.inter_cert_import` überschreiben, oder `chain_mode: fullchain` (Unraid: `CERT1_CHAIN_MODE=fullchain`) |
 | Body bei cmdb-PUT | `{"data": {...}}` | `FW_BODY_WRAPPER=none` bzw. `body_wrapper: none` |
+
+Für eine neue Firmware-Version gibt es `scripts/fw_probe.py`: Es liest Zugangsdaten aus einer `.env.fwtest`, ruft
+alle Listen aus, legt Testobjekte mit Präfix `acmeprobe-` an (Intermediate, Gruppe, Member) und löscht sie wieder.
 
 `acme-helper check --probe` ruft alle Listen-Endpunkte auf und zeigt, welche antworten. Meldet ein Endpunkt 404,
 im FortiWeb-API-Browser (`https://<fortiweb>:<port>/api/v2.0/...` im Browser mit GUI-Login) den korrekten Pfad
