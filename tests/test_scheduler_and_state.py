@@ -15,6 +15,14 @@ def test_next_run_today_and_tomorrow():
     assert next_run(late, sched) == datetime(2026, 9, 8, 3, 30, tzinfo=tz)
 
 
+def test_schedule_time_accepts_yaml_sexagesimal():
+    import yaml
+
+    raw = yaml.safe_load("time: 03:30\ntimezone: Europe/Berlin\n")
+    assert raw["time"] == 210
+    assert ScheduleConfig.model_validate(raw).time == "03:30"
+
+
 def test_pending_state_roundtrip(tmp_path):
     p = PendingTxtState(tmp_path)
     assert p.items() == []

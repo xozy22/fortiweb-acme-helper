@@ -1,15 +1,19 @@
 services:
   acme-helper:
+    image: ghcr.io/xozy22/fortiweb-acme-helper:latest
     build: .
-    image: acme-helper:local
     container_name: acme-helper
     restart: unless-stopped
     env_file: .env
+    environment:
+      PUID: 1000          # Besitzer von /data auf dem Host
+      PGID: 1000
+      TZ: Europe/Berlin
     volumes:
-      - ./config:/config:ro
+      - ./config:/config:ro   # config/config.yaml (optional, sonst Env-Modus über .env)
       - acme-data:/data
     # Einzellauf: docker compose run --rm acme-helper run --once
-    # Check:      docker compose run --rm acme-helper check
+    # Check:      docker compose run --rm acme-helper check --probe
     command: ["run"]
 
 volumes:

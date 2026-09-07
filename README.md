@@ -51,6 +51,48 @@ docker compose up -d                          # Daemon, täglich zur konfigurier
 Wenn alles funktioniert: `acme.staging: false` setzen und einmal `run --once --force-renew` ausführen,
 damit ein Produktionszertifikat ausgestellt und deployt wird.
 
+## Unraid
+
+Fertiges Template: [unraid/acme-helper.xml](unraid/acme-helper.xml). Alle Einstellungen inklusive Secrets werden
+als Variablen direkt in der Unraid-Oberfläche gesetzt, eine `config.yaml` ist nicht nötig.
+
+Import, zwei Wege:
+
+1. **Template-Datei ablegen:** XML nach `/boot/config/plugins/dockerMan/templates-user/acme-helper.xml` kopieren
+   (z.B. per SMB über die `flash`-Freigabe), danach *Docker → Add Container → Template* auswählen.
+2. **Template-Repository:** In *Apps → Settings → Template repositories* die URL
+   `https://github.com/xozy22/fortiweb-acme-helper` eintragen, danach erscheint `acme-helper` unter Apps.
+
+Das Image kommt aus der GitHub Container Registry: `ghcr.io/xozy22/fortiweb-acme-helper:latest`
+(gebaut per GitHub Actions für amd64 und arm64). `PUID`/`PGID` stehen im Template auf 99/100 (nobody:users),
+der Entrypoint setzt die Rechte auf `/data` entsprechend.
+
+Nach dem Start in der Container-Konsole prüfen:
+
+```bash
+acme-helper check --probe
+```
+
+### Env-Modus (Unraid, Portainer, `docker run`)
+
+Ist keine `/config/config.yaml` vorhanden und `ACME_EMAIL` gesetzt, baut der Container die Konfiguration aus
+Variablen. `acme-helper show-config` zeigt das Ergebnis (nur Variablennamen, keine Secret-Werte).
+
+| Variable | Bedeutung |
+|---|---|
+| `ACME_EMAIL`, `ACME_STAGING`, `ACME_KEY_TYPE`, `ACME_PROPAGATION_TIMEOUT`, `ACME_DIRECTORY_URL` | ACME-Einstellungen; `ACME_STAGING=true` zum Testen |
+| `CF_API_TOKEN` | aktiviert Provider `cf` |
+| `DODE_TOKEN` | aktiviert Provider `dode` |
+| `STRATO_USER`, `STRATO_PASS`, `STRATO_TOTP_SECRET`, `STRATO_TOTP_DEVICENAME` | aktiviert Provider `strato` |
+| `ZONES` | `suffix=provider`, getrennt durch `;` oder `,`. Beispiel `example.com=cf;acme.example.net=dode`. Bei genau einem Provider optional |
+| `FW_HOST`, `FW_PORT`, `FW_USER`, `FW_PASS`, `FW_VDOM`, `FW_VERIFY_TLS`, `FW_IMPORT_METHOD`, `FW_BODY_WRAPPER` | FortiWeb-Ziel `fw1`; ohne `FW_HOST` werden nur Zertifikate geholt |
+| `CERT1_DOMAINS` | Pflicht, kommagetrennt, z.B. `example.com,*.example.com` |
+| `CERT1_PREFIX`, `CERT1_POLICIES`, `CERT1_SNI`, `CERT1_CHAIN_MODE`, `CERT1_KEEP_OLD`, `CERT1_NAME`, `CERT1_KEY_TYPE` | Deploy-Optionen; `CERT1_SNI` im Format `gruppe:muster\|muster;gruppe2` |
+| `CERT2_*`, `CERT3_*`, ... | weitere Zertifikate, gleiche Felder |
+| `SCHEDULE_TIME`, `TZ` | täglicher Lauf |
+| `NOTIFY_WEBHOOK`, `NOTIFY_ON_SUCCESS`, `NOTIFY_ON_FAILURE` | Benachrichtigung |
+| `PUID`, `PGID` | Besitzer von `/data` |
+
 ## Kommandos
 
 | Kommando | Zweck |
@@ -61,6 +103,7 @@ damit ein Produktionszertifikat ausgestellt und deployt wird.
 | `deploy NAME [--force]` | Vorhandene Lineage (erneut) auf alle konfigurierten FortiWebs bringen |
 | `dns-test DOMAIN [--keep]` | Test-TXT über den ermittelten Provider setzen, autoritativ prüfen, wieder löschen |
 | `list` | Status aller Zertifikate und Deployments |
+| `show-config` | Effektive Konfiguration (aus Datei oder Env-Variablen) ohne Secret-Werte |
 
 Umgebungsvariablen: `ACME_HELPER_CONFIG` (Default `/config/config.yaml`), `ACME_HELPER_DATA`
 (Default `/data`), `ACME_HELPER_LOG_LEVEL` (`DEBUG` zeigt certbot-Aufrufe und HTTP-Details).

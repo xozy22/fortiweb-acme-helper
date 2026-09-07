@@ -1,0 +1,86 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>acme-helper</Name>
+  <Repository>ghcr.io/xozy22/fortiweb-acme-helper:latest</Repository>
+  <Registry>https://github.com/xozy22/fortiweb-acme-helper/pkgs/container/fortiweb-acme-helper</Registry>
+  <Network>bridge</Network>
+  <MyIP/>
+  <Shell>sh</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/xozy22/fortiweb-acme-helper/issues</Support>
+  <Project>https://github.com/xozy22/fortiweb-acme-helper</Project>
+  <Overview>Unofficial ACME DNS-01 automation for FortiWeb. Obtains (wildcard) certificates from Let's Encrypt via certbot, sets the DNS challenge records at Cloudflare, do.de or Strato (also via CNAME delegation), uploads the certificate to FortiWeb through its REST API, binds it to server policies / SNI members and cleans up old versions. Runs as a daemon and checks daily; certbot renews 30 days before expiry.&#xD;
+&#xD;
+This is an independent community project and NOT an official Fortinet tool. Not affiliated with Fortinet, Strato, Domain-Offensive, Cloudflare or Let's Encrypt.&#xD;
+&#xD;
+Configuration is done entirely via the variables below (no config file needed). Secrets are only passed as environment variables. Test first with ACME_STAGING=true. Run "acme-helper check --probe" from the container console to verify DNS providers and the FortiWeb connection.</Overview>
+  <Category>Network:Other Security: Tools:Utilities</Category>
+  <WebUI/>
+  <TemplateURL>https://raw.githubusercontent.com/xozy22/fortiweb-acme-helper/main/unraid/acme-helper.xml</TemplateURL>
+  <Icon>https://raw.githubusercontent.com/xozy22/fortiweb-acme-helper/main/unraid/icon.png</Icon>
+  <ExtraParams>--restart=unless-stopped</ExtraParams>
+  <PostArgs>run</PostArgs>
+  <CPUset/>
+  <DateInstalled/>
+  <DonateText/>
+  <DonateLink/>
+  <Requires/>
+
+  <!-- Volumes -->
+  <Config Name="Data (certbot state, deployed.json)" Target="/data" Default="/mnt/user/appdata/acme-helper/data" Mode="rw" Description="Persistent data: Let's Encrypt account, certificates, deployment state. Back this up." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/acme-helper/data</Config>
+  <Config Name="Config (optional config.yaml)" Target="/config" Default="/mnt/user/appdata/acme-helper/config" Mode="rw" Description="Optional. If a config.yaml exists here it takes precedence over the variables below. Also the place for a FortiWeb CA bundle (FW_VERIFY_TLS=/config/ca.pem)." Type="Path" Display="advanced" Required="false" Mask="false">/mnt/user/appdata/acme-helper/config</Config>
+
+  <!-- System -->
+  <Config Name="PUID" Target="PUID" Default="99" Mode="" Description="User ID owning /data (Unraid default nobody = 99)." Type="Variable" Display="advanced" Required="false" Mask="false">99</Config>
+  <Config Name="PGID" Target="PGID" Default="100" Mode="" Description="Group ID owning /data (Unraid default users = 100)." Type="Variable" Display="advanced" Required="false" Mask="false">100</Config>
+  <Config Name="TZ" Target="TZ" Default="Europe/Berlin" Mode="" Description="Timezone for the daily schedule." Type="Variable" Display="advanced" Required="false" Mask="false">Europe/Berlin</Config>
+  <Config Name="Schedule time (HH:MM)" Target="SCHEDULE_TIME" Default="03:30" Mode="" Description="Daily run time in the TZ above. A run at container start happens as well." Type="Variable" Display="advanced" Required="false" Mask="false">03:30</Config>
+  <Config Name="Log level" Target="ACME_HELPER_LOG_LEVEL" Default="INFO" Mode="" Description="INFO or DEBUG (DEBUG shows certbot calls and HTTP details)." Type="Variable" Display="advanced" Required="false" Mask="false">INFO</Config>
+
+  <!-- ACME -->
+  <Config Name="ACME e-mail" Target="ACME_EMAIL" Default="" Mode="" Description="Contact e-mail for the Let's Encrypt account (expiry warnings). Required; enables the env-only configuration mode." Type="Variable" Display="always" Required="true" Mask="false"></Config>
+  <Config Name="ACME staging" Target="ACME_STAGING" Default="true" Mode="" Description="true = Let's Encrypt staging (untrusted test certificates, no rate limits). Set to false once everything works, then force a renewal from the console: acme-helper run --once --force-renew" Type="Variable" Display="always" Required="true" Mask="false">true</Config>
+  <Config Name="ACME key type" Target="ACME_KEY_TYPE" Default="ecdsa" Mode="" Description="ecdsa or rsa" Type="Variable" Display="advanced" Required="false" Mask="false">ecdsa</Config>
+  <Config Name="ACME propagation timeout" Target="ACME_PROPAGATION_TIMEOUT" Default="300" Mode="" Description="Seconds to wait until the TXT records are visible on all authoritative name servers." Type="Variable" Display="advanced" Required="false" Mask="false">300</Config>
+  <Config Name="ACME directory URL" Target="ACME_DIRECTORY_URL" Default="" Mode="" Description="Optional: other ACME CA instead of Let's Encrypt." Type="Variable" Display="advanced" Required="false" Mask="false"></Config>
+
+  <!-- DNS providers -->
+  <Config Name="Cloudflare API token" Target="CF_API_TOKEN" Default="" Mode="" Description="API token with Zone:DNS:Edit and Zone:Zone:Read for the affected zones. Leave empty if Cloudflare is not used." Type="Variable" Display="always" Required="false" Mask="true"></Config>
+  <Config Name="do.de Let's Encrypt token" Target="DODE_TOKEN" Default="" Mode="" Description="Domain-Offensive (do.de) Let's Encrypt API token from my.do.de. Leave empty if not used." Type="Variable" Display="always" Required="false" Mask="true"></Config>
+  <Config Name="Strato user" Target="STRATO_USER" Default="" Mode="" Description="Strato customer number / login. Only needed for Strato domains WITHOUT CNAME delegation. Leave empty if not used." Type="Variable" Display="always" Required="false" Mask="false"></Config>
+  <Config Name="Strato password" Target="STRATO_PASS" Default="" Mode="" Description="Strato login password." Type="Variable" Display="always" Required="false" Mask="true"></Config>
+  <Config Name="Strato TOTP secret" Target="STRATO_TOTP_SECRET" Default="" Mode="" Description="Base32 TOTP secret if 2FA is enabled on the Strato account. Leave empty otherwise." Type="Variable" Display="advanced" Required="false" Mask="true"></Config>
+  <Config Name="Strato TOTP device name" Target="STRATO_TOTP_DEVICENAME" Default="" Mode="" Description="Name of the TOTP device as shown in the Strato login (needed with 2FA)." Type="Variable" Display="advanced" Required="false" Mask="false"></Config>
+  <Config Name="Zones" Target="ZONES" Default="" Mode="" Description="Which DNS provider manages which zone, matched against the name AFTER CNAME resolution (longest suffix wins). Format: suffix=provider, separated by ; or , . Providers: cf, dode, strato. Example: example.com=cf;acme.example.net=dode;legacy-strato.de=strato . Can be left empty if exactly one provider is configured." Type="Variable" Display="always" Required="false" Mask="false"></Config>
+
+  <!-- FortiWeb -->
+  <Config Name="FortiWeb host" Target="FW_HOST" Default="" Mode="" Description="IP or hostname of the FortiWeb management interface. Leave empty to only obtain certificates without deploying." Type="Variable" Display="always" Required="false" Mask="false"></Config>
+  <Config Name="FortiWeb port" Target="FW_PORT" Default="8443" Mode="" Description="HTTPS admin port." Type="Variable" Display="always" Required="false" Mask="false">8443</Config>
+  <Config Name="FortiWeb user" Target="FW_USER" Default="" Mode="" Description="Admin account with REST API access (trusted host must include the Unraid IP)." Type="Variable" Display="always" Required="false" Mask="false"></Config>
+  <Config Name="FortiWeb password" Target="FW_PASS" Default="" Mode="" Description="Password of the admin account." Type="Variable" Display="always" Required="false" Mask="true"></Config>
+  <Config Name="FortiWeb VDOM" Target="FW_VDOM" Default="root" Mode="" Description="Virtual domain, usually root." Type="Variable" Display="advanced" Required="false" Mask="false">root</Config>
+  <Config Name="FortiWeb verify TLS" Target="FW_VERIFY_TLS" Default="false" Mode="" Description="true, false, or a path to a CA bundle inside /config (e.g. /config/fortiweb-ca.pem)." Type="Variable" Display="advanced" Required="false" Mask="false">false</Config>
+  <Config Name="FortiWeb import method" Target="FW_IMPORT_METHOD" Default="multipart" Mode="" Description="multipart (documented) or json (certificate.local.json_cert)." Type="Variable" Display="advanced" Required="false" Mask="false">multipart</Config>
+  <Config Name="FortiWeb body wrapper" Target="FW_BODY_WRAPPER" Default="data" Mode="" Description="data = send {&quot;data&quot;: {...}} on cmdb PUT/POST, none = raw object. Change only if the firmware rejects updates." Type="Variable" Display="advanced" Required="false" Mask="false">data</Config>
+
+  <!-- Certificate 1 -->
+  <Config Name="Cert 1: domains" Target="CERT1_DOMAINS" Default="" Mode="" Description="Comma separated. Example: example.com,*.example.com" Type="Variable" Display="always" Required="true" Mask="false"></Config>
+  <Config Name="Cert 1: FortiWeb name prefix" Target="CERT1_PREFIX" Default="" Mode="" Description="Certificate is stored on FortiWeb as &lt;prefix&gt;-&lt;YYYYMMDD&gt;. Default: derived from the first domain (wc-example-com)." Type="Variable" Display="always" Required="false" Mask="false"></Config>
+  <Config Name="Cert 1: server policies" Target="CERT1_POLICIES" Default="" Mode="" Description="Comma separated FortiWeb server policy names whose 'certificate' field is set to the new certificate." Type="Variable" Display="always" Required="false" Mask="false"></Config>
+  <Config Name="Cert 1: SNI bindings" Target="CERT1_SNI" Default="" Mode="" Description="Optional. Format: group:pattern|pattern;group2 . Members of the SNI group whose domain matches get the new certificate; no pattern = all members. Example: sni-main:*.example.com|example.com" Type="Variable" Display="always" Required="false" Mask="false"></Config>
+  <Config Name="Cert 1: chain mode" Target="CERT1_CHAIN_MODE" Default="intermediate-group" Mode="" Description="intermediate-group (upload intermediates into an Intermediate CA group and bind it), fullchain (upload fullchain.pem as the certificate) or none." Type="Variable" Display="advanced" Required="false" Mask="false">intermediate-group</Config>
+  <Config Name="Cert 1: keep old versions" Target="CERT1_KEEP_OLD" Default="1" Mode="" Description="How many previous certificate versions to keep on FortiWeb." Type="Variable" Display="advanced" Required="false" Mask="false">1</Config>
+
+  <!-- Certificate 2 (optional) -->
+  <Config Name="Cert 2: domains" Target="CERT2_DOMAINS" Default="" Mode="" Description="Optional second certificate. Same format as Cert 1. For more certificates add CERT3_*, CERT4_* ... variables." Type="Variable" Display="advanced" Required="false" Mask="false"></Config>
+  <Config Name="Cert 2: FortiWeb name prefix" Target="CERT2_PREFIX" Default="" Mode="" Description="" Type="Variable" Display="advanced" Required="false" Mask="false"></Config>
+  <Config Name="Cert 2: server policies" Target="CERT2_POLICIES" Default="" Mode="" Description="" Type="Variable" Display="advanced" Required="false" Mask="false"></Config>
+  <Config Name="Cert 2: SNI bindings" Target="CERT2_SNI" Default="" Mode="" Description="" Type="Variable" Display="advanced" Required="false" Mask="false"></Config>
+  <Config Name="Cert 2: chain mode" Target="CERT2_CHAIN_MODE" Default="intermediate-group" Mode="" Description="" Type="Variable" Display="advanced" Required="false" Mask="false">intermediate-group</Config>
+  <Config Name="Cert 2: keep old versions" Target="CERT2_KEEP_OLD" Default="1" Mode="" Description="" Type="Variable" Display="advanced" Required="false" Mask="false">1</Config>
+
+  <!-- Notifications -->
+  <Config Name="Notification webhook" Target="NOTIFY_WEBHOOK" Default="" Mode="" Description="Optional URL that receives a JSON POST (fields: status, message, text, details) on success and failure. Works with Slack/Teams incoming webhooks, ntfy, Discord-compatible relays or custom endpoints." Type="Variable" Display="always" Required="false" Mask="true"></Config>
+  <Config Name="Notify on success" Target="NOTIFY_ON_SUCCESS" Default="true" Mode="" Description="" Type="Variable" Display="advanced" Required="false" Mask="false">true</Config>
+  <Config Name="Notify on failure" Target="NOTIFY_ON_FAILURE" Default="true" Mode="" Description="" Type="Variable" Display="advanced" Required="false" Mask="false">true</Config>
+</Container>

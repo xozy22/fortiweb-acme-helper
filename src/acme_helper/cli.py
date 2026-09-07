@@ -40,6 +40,15 @@ def cmd_deploy(cfg: Config, args: argparse.Namespace) -> int:
     return 1 if deploy_all(cfg, only=args.cert, force=args.force) else 0
 
 
+def cmd_show_config(cfg: Config, args: argparse.Namespace) -> int:
+    """Effektive Konfiguration als YAML. Enthält nur Env-Variablennamen, keine Secret-Werte."""
+    import yaml
+
+    print(f"# Quelle: {cfg.source}")
+    print(yaml.safe_dump(cfg.model_dump(mode="json", exclude_none=True), sort_keys=False, allow_unicode=True))
+    return 0
+
+
 def cmd_list(cfg: Config, args: argparse.Namespace) -> int:
     state = DeployState(cfg.state_dir).all()
     lineages = certbot_runner.list_lineages(cfg)
@@ -98,7 +107,7 @@ def cmd_check(cfg: Config, args: argparse.Namespace) -> int:
         problems += 1
         print(f"  [FAIL] {msg}")
 
-    print(f"Konfiguration: {os.environ.get('ACME_HELPER_CONFIG', '/config/config.yaml')}")
+    print(f"Konfiguration: {cfg.source}")
     print(f"ACME: {cfg.acme.email}, {'STAGING' if cfg.acme.staging else 'Produktion'}, Key {cfg.acme.key_type}")
 
     print("\nDNS-Provider:")
@@ -221,6 +230,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     ls = sub.add_parser("list", help="Status der Zertifikate und Deployments")
     ls.set_defaults(func=cmd_list)
+
+    sc = sub.add_parser("show-config", help="effektive Konfiguration anzeigen (aus Datei oder Env-Variablen)")
+    sc.set_defaults(func=cmd_show_config)
     return p
 
 

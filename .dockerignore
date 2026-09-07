@@ -1,4 +1,5 @@
 .git
+.github
 .venv
 data
 .env
@@ -6,3 +7,4 @@ config/config.yaml
 tests
 __pycache__
 *.egg-info
+unraid
