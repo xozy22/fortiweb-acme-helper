@@ -36,6 +36,18 @@ DEFAULT_ENDPOINTS: dict[str, str] = {
     "sni_members": "/api/v2.0/cmdb/system/certificate.sni/members",
 }
 
+# Der Pfad für Intermediate-CA-Zertifikate ist nicht für jede Firmware belegt; diese Kandidaten werden
+# beim ersten Zugriff der Reihe nach probiert (GET), der erste ohne Fehler wird verwendet.
+INTER_CERT_CANDIDATES = [
+    "/api/v2.0/system/certificate.intermediate_ca",
+    "/api/v2.0/system/certificate.intermediate-certificate",
+    "/api/v2.0/system/certificate.intermediate",
+    "/api/v2.0/system/certificate.intermediate-ca",
+    "/api/v2.0/system/certificate.intermediateca",
+    "/api/v2.0/cmdb/system/certificate.intermediate-certificate",
+    "/api/v2.0/cmdb/system/certificate.intermediate_ca",
+]
+
 # Felder, die FortiWeb bei GET mitliefert, aber bei PUT nicht akzeptiert
 READONLY_KEYS = {"q_ref", "q_type", "can_view", "can_clone", "can_delete", "can_edit"}
 
@@ -85,6 +97,10 @@ class FortiWebClient:
         self.import_method = import_method
         self.body_wrapper = body_wrapper
         self.endpoints = {**DEFAULT_ENDPOINTS, **(endpoints or {})}
+        # Explizit konfigurierte Intermediate-Pfade werden nicht überschrieben
+        self._inter_cert_fixed = bool(endpoints and ("inter_cert" in endpoints or "inter_cert_import" in endpoints))
+        self._inter_cert_discovered = self._inter_cert_fixed
+        self._inter_cert_path: str | None = self.endpoints["inter_cert"] if self._inter_cert_fixed else None
         self.http = session or requests.Session()
         self.http.verify = verify
         if verify is False:
@@ -180,13 +196,54 @@ class FortiWebClient:
     def ping(self) -> int:
         return len(self.list_local_certificates())
 
+    def discover_intermediate_endpoint(self) -> str | None:
+        """Probiert die Kandidaten für den Intermediate-CA-Pfad durch und merkt sich den ersten Treffer."""
+        if self._inter_cert_discovered:
+            return self._inter_cert_path
+        self._inter_cert_discovered = True
+        tried: list[str] = []
+        for path in [self.endpoints["inter_cert"], *INTER_CERT_CANDIDATES]:
+            if path in tried:
+                continue
+            tried.append(path)
+            url = self.base_url + path
+            try:
+                resp = self.http.get(url, timeout=self.timeout)
+            except requests.RequestException as exc:
+                raise FortiWebError(f"FortiWeb {self.base_url} nicht erreichbar: {exc}") from exc
+            body_ok = True
+            try:
+                body = resp.json()
+                results = body.get("results", body) if isinstance(body, dict) else body
+                if isinstance(results, dict) and results.get("errcode") not in (None, 0):
+                    body_ok = False
+            except ValueError:
+                body_ok = False
+            if resp.status_code < 400 and body_ok:
+                self.endpoints["inter_cert"] = path
+                self.endpoints["inter_cert_import"] = path + ".import_certificate"
+                self._inter_cert_path = path
+                log.info("FortiWeb: Intermediate-CA-Endpunkt gefunden: %s", path)
+                return path
+            log.debug("Intermediate-Kandidat %s: HTTP %s", path, resp.status_code)
+        log.warning("FortiWeb: kein Intermediate-CA-Endpunkt gefunden (probiert: %s)", ", ".join(tried))
+        return None
+
     def probe_endpoints(self) -> dict[str, str]:
         """GET auf alle Listen-Endpunkte; liefert {key: 'ok'|Fehlertext}."""
         out: dict[str, str] = {}
+        found = self.discover_intermediate_endpoint()
         for key in ("local_cert", "inter_cert", "inter_group", "server_policy", "sni_group"):
+            if key == "inter_cert" and found is None:
+                out[key] = (
+                    "kein Pfad gefunden (probiert: " + ", ".join(INTER_CERT_CANDIDATES) + "). "
+                    "Pfad aus dem FortiWeb-GUI (Browser-Entwicklertools) unter endpoints.inter_cert eintragen "
+                    "oder chain_mode=fullchain nutzen."
+                )
+                continue
             try:
                 self._request("GET", key)
-                out[key] = "ok"
+                out[key] = "ok" + (f" ({self.endpoints[key]})" if key == "inter_cert" else "")
             except FortiWebError as exc:
                 out[key] = str(exc)[:200]
         return out
@@ -233,10 +290,20 @@ class FortiWebClient:
         log.info("FortiWeb: Zertifikat '%s' gelöscht", name)
 
     # --- Intermediate CA ---------------------------------------------------
+    def _ensure_intermediate_endpoint(self) -> None:
+        if self.discover_intermediate_endpoint() is None:
+            raise FortiWebError(
+                "Intermediate-CA-Endpunkt auf dieser Firmware nicht gefunden. Entweder den Pfad unter "
+                "fortiwebs.<name>.endpoints.inter_cert konfigurieren oder chain_mode auf 'fullchain' bzw. 'none' "
+                "stellen (Unraid: CERT1_CHAIN_MODE=fullchain)."
+            )
+
     def list_intermediate_certificates(self) -> list[str]:
+        self._ensure_intermediate_endpoint()
         return [object_name(i) for i in self._list("inter_cert")]
 
     def import_intermediate_certificate(self, name: str, pem: str) -> str:
+        self._ensure_intermediate_endpoint()
         files = {"uploadedFile": (name, pem.encode(), "application/x-pem-file")}
         res = self._request("POST", "inter_cert_import", files=files, data={"type": "localPC"})
         effective = name

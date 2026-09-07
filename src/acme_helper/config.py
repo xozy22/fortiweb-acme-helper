@@ -133,7 +133,14 @@ class CertificateConfig(BaseModel):
     def _domains(cls, v: list[str]) -> list[str]:
         if not v:
             raise ValueError("mindestens eine Domain nötig")
-        return [d.strip().rstrip(".").lower() for d in v]
+        out = []
+        for raw in v:
+            d = raw.strip().rstrip(".").lower()
+            if not re.fullmatch(r"(\*\.)?([a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z0-9-]{2,}", d):
+                hint = " (Wildcard heißt '*.domain.tld', mit Punkt nach dem Stern)" if "*" in d else ""
+                raise ValueError(f"'{raw}' ist keine gültige Domain{hint}")
+            out.append(d)
+        return out
 
 
 class ScheduleConfig(BaseModel):

@@ -61,7 +61,40 @@ class StratoClient:
         self.session_id: str | None = None
 
     # --- Hilfsfunktionen ---------------------------------------------------
+    @staticmethod
+    def page_hints(html: str) -> list[str]:
+        """Zieht aus einer Strato-Seite die Stellen heraus, die einen Fehler erklären könnten."""
+        soup = BeautifulSoup(html, "html.parser")
+        hints: list[str] = []
+        title = soup.find("title")
+        if title and title.get_text(strip=True):
+            hints.append(f"Titel: {title.get_text(strip=True)[:120]}")
+        for h in soup.find_all(["h1", "h2"], limit=3):
+            text = h.get_text(" ", strip=True)
+            if text:
+                hints.append(f"Überschrift: {text[:120]}")
+        seen: set[str] = set()
+        for el in soup.select("[class*=error], [class*=alert], [class*=warning], [class*=notice], [id*=error]"):
+            text = " ".join(el.get_text(" ", strip=True).split())
+            if text and text not in seen and len(text) < 300:
+                seen.add(text)
+                hints.append(f"Meldung: {text}")
+            if len(seen) >= 5:
+                break
+        lowered = html.lower()
+        if "captcha" in lowered:
+            hints.append("Seite enthält ein Captcha: zu viele Fehlversuche, im Browser einloggen und warten")
+        if "zwei-faktor" in lowered or "totp" in lowered:
+            hints.append("Seite verlangt Zwei-Faktor-Authentifizierung")
+        for inp in soup.find_all("input"):
+            name = inp.get("name")
+            if name in ("identifier", "passwd", "totp", "totp_token"):
+                hints.append(f"Formularfeld vorhanden: {name}")
+        return hints
+
     def _dump(self, stage: str, html: str) -> None:
+        for hint in self.page_hints(html):
+            log.warning("Strato-Seite (%s): %s", stage, hint)
         if not self.debug_dir:
             return
         try:
@@ -129,7 +162,10 @@ class StratoClient:
         match = re.search(r"sessionID=([^&]+)", response.url)
         if not match:
             self._dump("login", response.text)
-            raise DnsError("Strato-Login fehlgeschlagen (keine sessionID in der Antwort-URL)")
+            raise DnsError(
+                f"Strato-Login fehlgeschlagen (keine sessionID in der Antwort-URL, HTTP {response.status_code}, "
+                f"URL {response.url[:120]}). Hinweise im Log oberhalb, HTML unter /data/debug."
+            )
         self.session_id = match.group(1)
         log.info("Strato: Login erfolgreich")
 
