@@ -53,7 +53,8 @@ Die FortiWeb-GUI hat werkseitig ein selbstsigniertes Zertifikat. Optionen:
 
 ## 4. Objekte, an die gebunden wird
 
-acme-helper ändert bestehende Objekte, es legt keine Server Policies oder SNI-Gruppen an.
+acme-helper legt keine Server Policies an, die müssen existieren. Intermediate-CA-Gruppen und SNI-Gruppen samt
+Membern legt es bei Bedarf selbst an.
 
 **Server Policy** (**Policy → Server Policy**): Der Name der Policy kommt in `CERT1_POLICIES` bzw.
 `server_policies`. acme-helper setzt dort das Feld *Certificate* (und *Intermediate CA Group*). War die Policy
@@ -110,8 +111,11 @@ acme-helper check
 ## 5. Ablauf eines Deploys
 
 1. Upload als `<prefix>-<YYYYMMDD>` unter **Server Objects → Certificates → Local**.
-2. Intermediates hochladen und in die Gruppe aufnehmen (idempotent, Name `le-<fingerprint>`).
-3. Policy/SNI per GET lesen, Felder ändern, komplett per PUT zurückschreiben.
+2. Intermediates hochladen (die FortiWeb vergibt Namen wie `Inter_Cert_3`; acme-helper merkt sich Fingerprint → Name
+   und lädt nichts doppelt hoch) und in die Gruppe `<prefix>-chain` aufnehmen. Member, die nicht mehr zur Kette
+   gehören, werden entfernt, selbst hochgeladene und nicht mehr benötigte Intermediates gelöscht.
+3. Policy per GET lesen, Felder ändern, komplett per PUT zurückschreiben. SNI-Member über die Untertabelle anlegen
+   oder ändern.
 4. Verifikation per GET.
 5. Alte `<prefix>-*`-Zertifikate löschen, `keep_old` (Standard 1) bleiben stehen.
 

@@ -39,7 +39,7 @@ fortiwebs:
     password_env: FW1_PASS
     vdom: root
     verify_tls: false          # oder Pfad zu einem CA-Bundle, z.B. /config/fortiweb-ca.pem
-    import_method: multipart   # multipart (dokumentiert) | json (certificate.local.json_cert)
+    import_method: multipart   # multipart (auf 8.0.7 geprüft, Standard) | json (Anlage per cmdb-POST mit Name)
     body_wrapper: data         # {"data": {...}} bei PUT/POST auf cmdb-Endpunkte; "none" für rohe Objekte
     # endpoints:               # Nur bei Abweichungen der Firmware überschreiben, siehe README
     #   inter_cert: /api/v2.0/cmdb/system/certificate.intermediate-certificate

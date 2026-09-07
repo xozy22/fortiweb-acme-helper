@@ -43,7 +43,7 @@ acme-helper run [--once]
 | Cloudflare: API-Token anlegen, prüfen, eintragen | [docs/providers/cloudflare.md](docs/providers/cloudflare.md) |
 | do.de: Let's-Encrypt-Token im Kundenportal, Besonderheiten der API | [docs/providers/dode.md](docs/providers/dode.md) |
 | Strato: CNAME-Delegation (empfohlen) oder Web-Login mit TOTP | [docs/providers/strato.md](docs/providers/strato.md) |
-| FortiWeb: Admin, Trusted Host, TLS, Server Policy und SNI, Firmware-Abweichungen | [docs/providers/fortiweb.md](docs/providers/fortiweb.md) |
+| FortiWeb: Admin, Trusted Host, TLS, Server Policy und SNI, REST-API-Details | [docs/providers/fortiweb.md](docs/providers/fortiweb.md) |
 | Unraid: Template importieren, Variablen, erster Start | [Abschnitt Unraid](#unraid) |
 
 ## Schnellstart
@@ -106,7 +106,7 @@ Die Maske zeigt zunächst die Pflichtfelder; *Show more settings* blendet die re
 | FortiWeb verify TLS | `false`, oder Pfad zu einem CA-Bundle, das du unter `/mnt/user/appdata/acme-helper/config/` ablegst |
 | Cert 1: domains | z.B. `example.com,*.example.com` |
 | Cert 1: server policies | Namen der Server-Policies, deren Zertifikat gesetzt werden soll |
-| Cert 1: SNI bindings | optional, z.B. `sni-main:*.example.com\|example.com` |
+| Cert 1: SNI group(s) | optional, nur für mehrere Domains/Zertifikate in einer Policy, z.B. `web-sni`; Gruppe und Member werden angelegt |
 | Notification webhook | optional, z.B. ntfy-Topic oder Slack/Teams-Webhook |
 
 Weitere Zertifikate: *Cert 2* ist im Template vorgesehen. Für noch mehr im Container-Dialog unter
