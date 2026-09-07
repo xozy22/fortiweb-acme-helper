@@ -40,6 +40,112 @@ def cmd_deploy(cfg: Config, args: argparse.Namespace) -> int:
     return 1 if deploy_all(cfg, only=args.cert, force=args.force) else 0
 
 
+def cmd_diag(cfg: Config, args: argparse.Namespace) -> int:
+    """Netzwerkdiagnose: Resolver, Weg zur FortiWeb (DNS, TCP, TLS, API) und Challenge-Auflösung."""
+    import socket
+    import ssl
+    import time
+
+    import dns.resolver
+    from cryptography import x509
+
+    from .dns.resolver import authoritative_nameservers, find_zone_apex
+    from .errors import ConfigError
+
+    def head(title: str) -> None:
+        print(f"\n== {title}")
+
+    def tcp_tls(host: str, port: int, verify: bool | str) -> None:
+        try:
+            infos = socket.getaddrinfo(host, port, proto=socket.IPPROTO_TCP)
+            ips = sorted({i[4][0] for i in infos})
+            print(f"  DNS      {host} -> {', '.join(ips)}")
+        except socket.gaierror as exc:
+            print(f"  DNS      {host}: FEHLER {exc}")
+            return
+        t0 = time.monotonic()
+        try:
+            with socket.create_connection((host, port), timeout=args.timeout) as sock:
+                print(f"  TCP      {host}:{port} erreichbar ({(time.monotonic() - t0) * 1000:.0f} ms)")
+                ctx = ssl.create_default_context()
+                ctx.check_hostname = False
+                ctx.verify_mode = ssl.CERT_NONE
+                try:
+                    with ctx.wrap_socket(sock, server_hostname=host) as tls:
+                        der = tls.getpeercert(binary_form=True)
+                        print(f"  TLS      {tls.version()}, Cipher {tls.cipher()[0]}")
+                        if der:
+                            cert = x509.load_der_x509_certificate(der)
+                            print(f"           Subject: {cert.subject.rfc4514_string()}")
+                            print(f"           Issuer:  {cert.issuer.rfc4514_string()}")
+                            print(f"           Gültig bis {cert.not_valid_after_utc:%Y-%m-%d}")
+                            try:
+                                sans = cert.extensions.get_extension_for_class(x509.SubjectAlternativeName).value
+                                print(f"           SAN: {', '.join(str(n.value) for n in sans)}")
+                            except x509.ExtensionNotFound:
+                                pass
+                except ssl.SSLError as exc:
+                    print(f"  TLS      Handshake fehlgeschlagen: {exc}")
+        except OSError as exc:
+            print(f"  TCP      {host}:{port} NICHT erreichbar: {exc}")
+            return
+        if verify is not False:
+            ctx = ssl.create_default_context(cafile=verify if isinstance(verify, str) else None)
+            try:
+                with socket.create_connection((host, port), timeout=args.timeout) as s2, ctx.wrap_socket(s2, server_hostname=host):
+                    print("  Verify   Zertifikatsprüfung OK")
+            except (ssl.SSLError, OSError) as exc:
+                print(f"  Verify   Zertifikatsprüfung schlägt fehl ({exc}). verify_tls=false oder CA-Bundle nötig.")
+
+    head("Resolver")
+    res = dns.resolver.Resolver()
+    print(f"  Nameserver: {', '.join(res.nameservers)}")
+    for probe in ("acme-v02.api.letsencrypt.org", "api.cloudflare.com"):
+        try:
+            ips = sorted({i[4][0] for i in socket.getaddrinfo(probe, 443, proto=socket.IPPROTO_TCP)})
+            print(f"  {probe} -> {ips[0]}{' ...' if len(ips) > 1 else ''}")
+        except socket.gaierror as exc:
+            print(f"  {probe}: FEHLER {exc}")
+
+    if args.host:
+        head(f"Ziel {args.host}:{args.port}")
+        tcp_tls(args.host, args.port, False)
+
+    for name, fw in cfg.fortiwebs.items():
+        head(f"FortiWeb {name} ({fw.host}:{fw.port})")
+        tcp_tls(fw.host, fw.port, fw.verify_tls)
+        try:
+            client = FortiWebClient.from_config(name, fw)
+            n = client.ping()
+            print(f"  API      Login OK, {n} lokale Zertifikate")
+        except ConfigError as exc:
+            print(f"  API      übersprungen: {exc}")
+        except AcmeHelperError as exc:
+            print(f"  API      FEHLER: {exc}")
+
+    if cfg.certificates:
+        head("Challenge-Auflösung")
+        seen: set[str] = set()
+        for cert in cfg.certificates:
+            for d in cert.domains:
+                fqdn = challenge_name(d)
+                if fqdn in seen:
+                    continue
+                seen.add(fqdn)
+                try:
+                    target = follow_cname(fqdn)
+                    zone = find_zone_apex(target)
+                    ns = authoritative_nameservers(zone)
+                    z = match_zone(target, cfg.zones)
+                    arrow = f" -> {target}" if target != fqdn else ""
+                    print(f"  {fqdn}{arrow}")
+                    print(f"           Zone {zone}, {len(ns)} NS ({ns[0]}{' ...' if len(ns) > 1 else ''}), Provider {z.provider if z else 'KEINER'}")
+                except AcmeHelperError as exc:
+                    print(f"  {fqdn}: FEHLER {exc}")
+    print()
+    return 0
+
+
 def cmd_show_config(cfg: Config, args: argparse.Namespace) -> int:
     """Effektive Konfiguration als YAML. Enthält nur Env-Variablennamen, keine Secret-Werte."""
     import yaml
@@ -233,6 +339,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     sc = sub.add_parser("show-config", help="effektive Konfiguration anzeigen (aus Datei oder Env-Variablen)")
     sc.set_defaults(func=cmd_show_config)
+
+    dg = sub.add_parser("diag", help="Netzwerkdiagnose: Resolver, FortiWeb (DNS/TCP/TLS/API), Challenge-Auflösung")
+    dg.add_argument("--host", help="zusätzliches Ziel prüfen (TCP + TLS)")
+    dg.add_argument("--port", type=int, default=443)
+    dg.add_argument("--timeout", type=int, default=5)
+    dg.set_defaults(func=cmd_diag)
     return p
 
 

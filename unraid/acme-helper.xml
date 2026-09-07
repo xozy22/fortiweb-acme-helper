@@ -5,7 +5,7 @@
   <Registry>https://github.com/xozy22/fortiweb-acme-helper/pkgs/container/fortiweb-acme-helper</Registry>
   <Network>bridge</Network>
   <MyIP/>
-  <Shell>sh</Shell>
+  <Shell>bash</Shell>
   <Privileged>false</Privileged>
   <Support>https://github.com/xozy22/fortiweb-acme-helper/issues</Support>
   <Project>https://github.com/xozy22/fortiweb-acme-helper</Project>
@@ -13,7 +13,7 @@
 &#xD;
 This is an independent community project and NOT an official Fortinet tool. Not affiliated with Fortinet, Strato, Domain-Offensive, Cloudflare or Let's Encrypt.&#xD;
 &#xD;
-Configuration is done entirely via the variables below (no config file needed). Secrets are only passed as environment variables. Test first with ACME_STAGING=true. Run "acme-helper check --probe" from the container console to verify DNS providers and the FortiWeb connection.</Overview>
+Configuration is done entirely via the variables below (no config file needed). Secrets are only passed as environment variables. Test first with ACME_STAGING=true. Run "acme-helper check --probe" from the container console to verify DNS providers and the FortiWeb connection, "acme-helper diag" for a network diagnosis. curl, ping, ip, dig, nc, traceroute and openssl are included for troubleshooting.</Overview>
   <Category>Network:Other Security: Tools:Utilities</Category>
   <WebUI/>
   <TemplateURL>https://raw.githubusercontent.com/xozy22/fortiweb-acme-helper/main/unraid/acme-helper.xml</TemplateURL>

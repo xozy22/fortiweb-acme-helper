@@ -9,8 +9,11 @@ ENV PYTHONUNBUFFERED=1 \
     PGID=1000
 
 # gosu: Rechte nach dem chown der Volumes abgeben (PUID/PGID, Unraid-Konvention)
+# Rest: Netzwerkdiagnose aus der Container-Konsole (curl, ping, ip, dig, nc, traceroute, openssl, ps)
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends gosu \
+    && apt-get install -y --no-install-recommends \
+        gosu ca-certificates curl iputils-ping iproute2 bind9-dnsutils \
+        netcat-openbsd traceroute openssl procps less nano \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd -g 1000 acme && useradd -u 1000 -g acme -m acme \
     && mkdir -p /data /config \

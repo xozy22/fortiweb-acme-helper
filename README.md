@@ -136,6 +136,39 @@ Unraid-Rechten beschrieben wird. Der Entrypoint setzt die Rechte beim Start.
 - **Fehlersuche:** *Log level* auf `DEBUG` stellen. Bei Strato-Problemen liegt das zuletzt gesehene HTML unter
   `/mnt/user/appdata/acme-helper/data/debug/`.
 
+### Netzwerkdiagnose aus der Konsole
+
+Das Image enthält `curl`, `ping`, `ip`, `dig`/`nslookup`, `nc`, `traceroute`, `openssl`, `ps`, `less` und `nano`.
+Der schnellste Einstieg ist das eingebaute Kommando, das den kompletten Weg zur FortiWeb prüft:
+
+```bash
+acme-helper diag
+```
+
+Es zeigt den Resolver des Containers, die Auflösung von Let's Encrypt und Cloudflare, für jede FortiWeb DNS,
+TCP-Erreichbarkeit, TLS-Version, Zertifikat (Subject, Issuer, Ablauf, SAN), ob die Zertifikatsprüfung mit der
+aktuellen `verify_tls`-Einstellung durchgeht, und ob der API-Login klappt. Zum Schluss die Challenge-Auflösung
+jeder Domain mit Zone, Nameservern und zuständigem Provider. Ein beliebiges anderes Ziel geht mit
+`acme-helper diag --host 10.0.0.5 --port 8443`.
+
+Manuell, falls es tiefer gehen soll:
+
+```bash
+ip -brief addr                                   # IP des Containers (bridge: 172.17.x.x)
+ping -c 3 10.0.0.5                               # FortiWeb erreichbar?
+nc -zv 10.0.0.5 8443                             # Admin-Port offen?
+traceroute -n 10.0.0.5                           # Weg dorthin (VLAN/Firewall dazwischen?)
+openssl s_client -connect 10.0.0.5:8443 -servername fortiweb </dev/null | head -20   # TLS-Handshake und Zertifikat
+curl -vk https://10.0.0.5:8443/api/v2.0/system/certificate.local \
+  -H "Authorization: $(printf '{"username":"%s","password":"%s","vdom":"root"}' "$FW_USER" "$FW_PASS" | base64 -w0)"
+dig _acme-challenge.example.com CNAME +short     # CNAME-Delegation korrekt?
+dig @1.1.1.1 _acme-challenge.example.com TXT +short
+```
+
+Antwortet die FortiWeb mit `403`, ist meist der Trusted Host des Admins nicht auf die Unraid-IP gesetzt.
+Kommt gar keine Verbindung zustande, liegt es in der Regel am Docker-Netzwerk (bridge kann das Unraid-Host-Netz
+nicht immer erreichen, dann `br0` mit eigener IP verwenden) oder an einer Firewall zwischen Unraid und Management-VLAN.
+
 ### Env-Modus (Unraid, Portainer, `docker run`)
 
 Ist keine `/config/config.yaml` vorhanden und `ACME_EMAIL` gesetzt, baut der Container die Konfiguration aus
@@ -167,6 +200,7 @@ Variablen. `acme-helper show-config` zeigt das Ergebnis (nur Variablennamen, kei
 | `dns-test DOMAIN [--keep]` | Test-TXT über den ermittelten Provider setzen, autoritativ prüfen, wieder löschen |
 | `list` | Status aller Zertifikate und Deployments |
 | `show-config` | Effektive Konfiguration (aus Datei oder Env-Variablen) ohne Secret-Werte |
+| `diag [--host H --port P]` | Netzwerkdiagnose: Resolver, FortiWeb (DNS, TCP, TLS, Verify, API-Login), Challenge-Auflösung je Domain |
 
 Umgebungsvariablen: `ACME_HELPER_CONFIG` (Default `/config/config.yaml`), `ACME_HELPER_DATA`
 (Default `/data`), `ACME_HELPER_LOG_LEVEL` (`DEBUG` zeigt certbot-Aufrufe und HTTP-Details).
