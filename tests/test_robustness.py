@@ -153,6 +153,20 @@ def test_sni_member_updated_via_subtable_put():
 
 
 @responses.activate
+def test_missing_object_errcode_minus_3_is_none():
+    # FortiWeb 8.0.7: fehlendes Objekt -> HTTP 500 + errcode -3
+    responses.get(GROUP, status=500, json={"results": {"errcode": -3, "message": "The entry is not found."}})
+    assert _client().get_intermediate_group("nope") is None
+
+
+@responses.activate
+def test_other_errcode_still_raises():
+    responses.get(GROUP, status=500, json={"results": {"errcode": -7721, "message": "This certificate is invalid."}})
+    with pytest.raises(FortiWebError, match="7721"):
+        _client().get_intermediate_group("x")
+
+
+@responses.activate
 def test_explicit_endpoint_override_for_intermediate():
     responses.get(f"{BASE}/custom/inter", json={"results": [{"name": "x"}]})
     assert _client(endpoints={"inter_cert": "/custom/inter"}).list_intermediate_certificates() == ["x"]

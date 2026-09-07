@@ -142,18 +142,28 @@ class FortiWebClient:
                 body = resp.json()
             except ValueError:
                 body = None
+        errcode: int | None = None
+        results: Any = body.get("results", body) if isinstance(body, dict) else None
+        if isinstance(results, dict) and results.get("errcode") not in (0, None, "0"):
+            try:
+                errcode = int(results["errcode"])
+            except (TypeError, ValueError):
+                errcode = None
         if resp.status_code >= 400:
             raise FortiWebError(
                 f"FortiWeb {method} {self.endpoints[key]}"
                 f"{'?' + '&'.join(f'{k}={v}' for k, v in (params or {}).items()) if params else ''}"
-                f" -> HTTP {resp.status_code}: {text[:300]}"
+                f" -> HTTP {resp.status_code}: {text[:300]}",
+                status=resp.status_code,
+                errcode=errcode,
             )
         if isinstance(body, dict):
-            results = body.get("results", body)
-            if isinstance(results, dict) and "errcode" in results and results.get("errcode") not in (0, None):
+            if errcode is not None:
                 raise FortiWebError(
-                    f"FortiWeb {method} {self.endpoints[key]} Fehler {results.get('errcode')}: "
-                    f"{results.get('message') or text[:300]}"
+                    f"FortiWeb {method} {self.endpoints[key]} Fehler {errcode}: "
+                    f"{results.get('message') or text[:300]}",
+                    status=resp.status_code,
+                    errcode=errcode,
                 )
             return results
         return body if body is not None else text
@@ -165,7 +175,7 @@ class FortiWebClient:
         try:
             res = self._request("GET", key, params={"mkey": mkey})
         except FortiWebError as exc:
-            if "HTTP 404" in str(exc):
+            if exc.not_found:
                 return None
             raise
         if isinstance(res, list):
