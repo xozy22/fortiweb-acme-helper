@@ -195,7 +195,9 @@ Variablen. `acme-helper show-config` zeigt das Ergebnis (nur Variablennamen, kei
 | `ZONES` | `suffix=provider`, getrennt durch `;` oder `,`. Beispiel `example.com=cf;acme.example.net=dode`. Bei genau einem Provider optional |
 | `FW_HOST`, `FW_PORT`, `FW_USER`, `FW_PASS`, `FW_VDOM`, `FW_VERIFY_TLS`, `FW_IMPORT_METHOD`, `FW_BODY_WRAPPER` | FortiWeb-Ziel `fw1`; ohne `FW_HOST` werden nur Zertifikate geholt |
 | `CERT1_DOMAINS` | Pflicht, kommagetrennt, z.B. `example.com,*.example.com` |
-| `CERT1_PREFIX`, `CERT1_POLICIES`, `CERT1_SNI`, `CERT1_CHAIN_MODE`, `CERT1_KEEP_OLD`, `CERT1_NAME`, `CERT1_KEY_TYPE` | Deploy-Optionen; `CERT1_SNI` im Format `gruppe:muster\|muster;gruppe2` |
+| `CERT1_PREFIX`, `CERT1_POLICIES`, `CERT1_CHAIN_MODE`, `CERT1_KEEP_OLD`, `CERT1_NAME`, `CERT1_KEY_TYPE` | Deploy-Optionen |
+| `CERT1_SNI` | SNI-Gruppe(n), Format `gruppe[:domain\|domain];gruppe2`. Ohne Domains werden die Domains des Zertifikats als Member angelegt. Gruppe und fehlende Member werden erzeugt, in den Policies wird SNI aktiviert |
+| `CERT1_SNI_POLICIES`, `CERT1_SNI_STRICT`, `CERT1_SNI_WILDCARD`, `CERT1_SNI_CREATE`, `CERT1_BIND_DEFAULT` | Policies für SNI (Default `CERT1_POLICIES`), `sni-strict`, Wildcard als `plain` oder `regex`, Anlegen erlauben (Default true), Default-Zertifikat der Policy setzen (Default true) |
 | `CERT2_*`, `CERT3_*`, ... | weitere Zertifikate, gleiche Felder |
 | `SCHEDULE_TIME`, `TZ` | täglicher Lauf |
 | `NOTIFY_WEBHOOK`, `NOTIFY_ON_SUCCESS`, `NOTIFY_ON_FAILURE` | Benachrichtigung |

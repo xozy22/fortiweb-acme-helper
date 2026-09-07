@@ -60,9 +60,42 @@ acme-helper ändert bestehende Objekte, es legt keine Server Policies oder SNI-G
 auf ein FortiWeb-eigenes Let's-Encrypt-Zertifikat eingestellt (*Certificate Type = Let's Encrypt*), wird das auf
 *Local* umgestellt.
 
-**SNI-Gruppe** (**Server Objects → Certificates → SNI**): Für mehrere Domains auf einer Policy. Der Gruppenname
-und optional die Domain-Muster der betroffenen Member kommen in `CERT1_SNI` (`gruppe:muster|muster`) bzw. `sni`.
-acme-helper setzt bei den passenden Membern *Local Certificate* und *Intermediate CA Group*.
+**SNI-Gruppe** (**Server Objects → Certificates → Inline SNI**, in der Policy unter *Advanced SSL Settings → SNI*):
+Für mehrere Domains bzw. mehrere Zertifikate auf einer Policy. acme-helper übernimmt den kompletten Aufbau:
+
+1. Die Gruppe wird angelegt, falls sie fehlt.
+2. Je Domain des Zertifikats (oder je Eintrag in `domains`) ein Member: existiert ein Member mit genau dieser
+   Domain, oder passt seine Domain auf das Muster (`app.example.com` zu `*.example.com`), wird er auf das neue
+   Zertifikat und die Intermediate-Gruppe umgestellt. Sonst wird er angelegt, Domain-Typ `plain`.
+3. In den Policies (`policies`, Default: `server_policies` des Ziels) werden *SNI* auf `enable` und
+   *SNI Certificate* auf die Gruppe gesetzt, optional *Strict SNI*.
+
+Wildcards: Die FortiWeb akzeptiert `*.example.com` als Plain-Domain. Ob sie das Wildcard beim Matching auswertet,
+hängt von der Firmware ab; falls nicht, `wildcard: regex` (Unraid: `CERT1_SNI_WILDCARD=regex`) setzen, dann wird
+der Member als regulärer Ausdruck `^[^.]+\.example\.com$` angelegt.
+
+Beispiel: zwei Zertifikate auf einer Policy. Das erste liefert das Default-Zertifikat für Clients ohne SNI,
+das zweite hängt nur in der SNI-Gruppe:
+
+```yaml
+certificates:
+  - name: wc-example
+    domains: ["example.com", "*.example.com"]
+    deploy:
+      - fortiweb: fw1
+        cert_name_prefix: wc-example
+        server_policies: [policy-web]
+        sni: [{ group: web-sni }]                  # Member example.com, *.example.com; SNI in policy-web aktiv
+  - name: wc-other
+    domains: ["*.other.org"]
+    deploy:
+      - fortiweb: fw1
+        cert_name_prefix: wc-other
+        bind_default_certificate: false            # Feld "certificate" der Policy nicht anfassen
+        sni: [{ group: web-sni, policies: [policy-web] }]
+```
+
+Unraid: `CERT1_SNI=web-sni`, `CERT2_SNI=web-sni`, `CERT2_SNI_POLICIES=policy-web`, `CERT2_BIND_DEFAULT=false`.
 
 **Intermediate CA Group** (**Server Objects → Certificates → Intermediate CA**): Wird bei `chain_mode:
 intermediate-group` (Standard) automatisch angelegt und mit den Let's-Encrypt-Intermediates befüllt, Name

@@ -70,12 +70,20 @@ class FakeFortiWeb:
     def get_sni_group(self, name):
         return {"name": name} if name in self.sni else None
 
+    def create_sni_group(self, name):
+        self.sni[name] = []
+
     def list_sni_members(self, group):
         return [dict(m) for m in self.sni[group]]
 
+    def add_sni_member(self, group, data):
+        m = {"id": str(len(self.sni[group]) + 1), **data}
+        self.sni[group].append(m)
+        return m
+
     def update_sni_member(self, group, member, changes):
         for m in self.sni[group]:
-            if m["id"] == member["id"]:
+            if str(m["id"]) == str(member["id"]):
                 m.update(changes)
 
 
@@ -103,9 +111,10 @@ def test_full_deploy_flow(cfg, lineage):
     assert fw.policies["pol1"]["intermediate-certificate-group"] == "wc-example-chain"
     assert len(fw.groups["wc-example-chain"]) == 1 and fw.inter == ["Inter_Cert_1"]
     assert fw.groups["wc-example-chain"][0]["name"] == "Inter_Cert_1"
-    # Nur der passende SNI-Member wurde umgestellt
+    # Nur der passende SNI-Member wurde umgestellt, other.org bleibt; Policy hat SNI mit der Gruppe aktiv
     assert fw.sni["sni1"][0]["local-cert"] == new
     assert fw.sni["sni1"][1]["local-cert"] == "y"
+    assert fw.policies["pol1"]["sni"] == "enable" and fw.policies["pol1"]["sni-certificate"] == "sni1"
     # keep_old=1: 20260401 bleibt, 20260101 wird gelöscht
     assert fw.deleted == ["wc-example-20260101"]
     assert state.get("wc-example", "fw1")["fw_cert_name"] == new

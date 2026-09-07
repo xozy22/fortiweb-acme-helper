@@ -94,8 +94,19 @@ class FortiWebConfig(BaseModel):
 
 
 class SniBinding(BaseModel):
+    """Mehrere Domains in einer Policy: SNI-Gruppe mit einem Member je Domain.
+
+    Die Gruppe und fehlende Member werden angelegt (create), bestehende Member, deren Domain zu einem
+    Muster passt, werden auf das neue Zertifikat umgestellt. In den Policies (policies, Default:
+    server_policies des Ziels) wird SNI aktiviert und die Gruppe eingetragen.
+    """
+
     group: str
-    domains: list[str] = Field(default_factory=list)  # leer = alle Member der Gruppe
+    domains: list[str] = Field(default_factory=list)  # leer = Domains des Zertifikats
+    create: bool = True  # Gruppe und fehlende Member anlegen
+    policies: list[str] | None = None  # None = server_policies des Deploy-Ziels; [] = keine Policy anfassen
+    strict: bool | None = None  # sni-strict in der Policy setzen (None = unverändert)
+    wildcard: Literal["plain", "regex"] = "plain"  # *.example.com als plain-Domain oder als Regex-Member
 
 
 class DeployTarget(BaseModel):
@@ -104,6 +115,7 @@ class DeployTarget(BaseModel):
     chain_mode: Literal["intermediate-group", "fullchain", "none"] = "intermediate-group"
     intermediate_group: str | None = None  # Default: <prefix>-chain
     server_policies: list[str] = Field(default_factory=list)
+    bind_default_certificate: bool = True  # Feld "certificate" der Policies setzen (Default-Zertifikat ohne SNI)
     sni: list[SniBinding] = Field(default_factory=list)
     keep_old: int = 1
 
@@ -247,12 +259,22 @@ def _prefix_from_domain(domain: str) -> str:
     return ("wc-" + slug)[:40].rstrip("-")
 
 
-def _parse_sni(value: str | None) -> list[dict]:
-    """'sni-main:*.example.com|example.com;sni-other' -> [{group, domains}]"""
+def _parse_sni(value: str | None, *, policies: str | None = None, strict: str | None = None,
+               wildcard: str | None = None, create: str | None = None) -> list[dict]:
+    """'sni-main:*.example.com|example.com;sni-other' -> [{group, domains, ...}]"""
     out: list[dict] = []
     for entry in _split(value, ";"):
         group, _, patterns = entry.partition(":")
-        out.append({"group": group.strip(), "domains": _split(patterns, "|,")})
+        item: dict = {"group": group.strip(), "domains": _split(patterns, "|,")}
+        if policies is not None:
+            item["policies"] = _split(policies)
+        if strict is not None and strict.strip() != "":
+            item["strict"] = _bool(strict)
+        if wildcard:
+            item["wildcard"] = wildcard.strip().lower()
+        if create is not None and create.strip() != "":
+            item["create"] = _bool(create, True)
+        out.append(item)
     return out
 
 
@@ -341,7 +363,14 @@ def config_from_env(env: Mapping[str, str] | None = None) -> dict:
                     "cert_name_prefix": prefix,
                     "chain_mode": get("CHAIN_MODE") or "intermediate-group",
                     "server_policies": _split(get("POLICIES")),
-                    "sni": _parse_sni(get("SNI")),
+                    "bind_default_certificate": _bool(get("BIND_DEFAULT"), True),
+                    "sni": _parse_sni(
+                        get("SNI"),
+                        policies=get("SNI_POLICIES"),
+                        strict=get("SNI_STRICT"),
+                        wildcard=get("SNI_WILDCARD"),
+                        create=get("SNI_CREATE"),
+                    ),
                     "keep_old": int(get("KEEP_OLD") or 1),
                 }
             )

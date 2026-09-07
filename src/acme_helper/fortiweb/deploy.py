@@ -12,7 +12,7 @@ from pathlib import Path
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes
 
-from ..config import Config, CertificateConfig, DeployTarget
+from ..config import Config, CertificateConfig, DeployTarget, SniBinding
 from ..errors import FortiWebError
 from ..state import DeployState
 from .client import FortiWebClient, get_field, member_id
@@ -84,13 +84,6 @@ def old_certificates(prefix: str, names: list[str], current: str) -> list[str]:
     """Alle Zertifikate mit unserem Prefix außer dem aktuellen, neueste zuerst."""
     pat = re.compile(rf"^{re.escape(prefix)}-\d{{8}}(-\d+)?$")
     return sorted((n for n in names if pat.match(n) and n != current), reverse=True)
-
-
-def sni_member_matches(member: dict, patterns: list[str]) -> bool:
-    if not patterns:
-        return True
-    domain = str(get_field(member, "domain", "")).lower()
-    return any(fnmatch.fnmatchcase(domain, p.lower()) or domain == p.lower() for p in patterns)
 
 
 def ensure_intermediate_group(
@@ -174,27 +167,110 @@ def bind_server_policy(client: FortiWebClient, policy: str, fw_cert: str, inter_
     result.messages.append(f"Policy '{policy}' -> '{fw_cert}'")
 
 
-def bind_sni(client: FortiWebClient, group: str, patterns: list[str], fw_cert: str, inter_group: str | None, result: DeployResult) -> None:
+def wildcard_regex(domain: str) -> str:
+    """'*.example.com' -> Regex für genau eine Label-Ebene darunter."""
+    return rf"^[^.]+\.{re.escape(domain[2:])}$"
+
+
+def sni_member_spec(pattern: str, wildcard_mode: str) -> tuple[str, str]:
+    """Liefert (domain, domain-type) für einen anzulegenden SNI-Member."""
+    if pattern.startswith("*.") and wildcard_mode == "regex":
+        return wildcard_regex(pattern), "regular"
+    return pattern, "plain"
+
+
+def _member_matches_pattern(member: dict, pattern: str, wanted_domain: str) -> bool:
+    domain = str(get_field(member, "domain", "")).lower()
+    if domain == wanted_domain.lower():
+        return True
+    if str(get_field(member, "domain-type", "plain")).lower() != "plain":
+        return False
+    return fnmatch.fnmatchcase(domain, pattern.lower())
+
+
+def bind_sni(
+    client: FortiWebClient,
+    binding: SniBinding,
+    cert_domains: list[str],
+    policies: list[str],
+    fw_cert: str,
+    inter_group: str | None,
+    result: DeployResult,
+) -> None:
+    group = binding.group
     if client.get_sni_group(group) is None:
-        raise FortiWebError(f"SNI-Gruppe '{group}' existiert nicht auf FortiWeb")
+        if not binding.create:
+            raise FortiWebError(f"SNI-Gruppe '{group}' existiert nicht auf FortiWeb (create: false)")
+        client.create_sni_group(group)
+        result.messages.append(f"SNI-Gruppe '{group}' angelegt")
+
+    base_changes: dict = {"local-cert": fw_cert}
+    if inter_group:
+        base_changes["inter-group"] = inter_group
+    patterns = binding.domains or cert_domains
     members = client.list_sni_members(group)
-    hits = [m for m in members if sni_member_matches(m, patterns)]
-    if not hits:
-        result.warnings.append(f"SNI-Gruppe '{group}': kein Member passt zu {patterns or 'allen'}")
-        return
-    for m in hits:
-        changes: dict = {"local-cert": fw_cert}
-        if inter_group:
-            changes["inter-group"] = inter_group
-        if str(get_field(m, "certificate-type", "")).lower() == "enable":
-            changes["certificate-type"] = "disable"
-        client.update_sni_member(group, m, changes)
-    after = {str(get_field(m, "id") or get_field(m, "name")): m for m in client.list_sni_members(group)}
-    for m in hits:
-        mid = str(get_field(m, "id") or get_field(m, "name"))
-        if str(get_field(after.get(mid, {}), "local-cert", "")) != fw_cert:
+    updated_ids: set[str] = set()
+    created_domains: list[str] = []
+    for pattern in patterns:
+        wanted_domain, wanted_type = sni_member_spec(pattern, binding.wildcard)
+        hits = [m for m in members if _member_matches_pattern(m, pattern, wanted_domain)]
+        if not hits:
+            if not binding.create:
+                result.warnings.append(f"SNI-Gruppe '{group}': kein Member für '{pattern}' (create: false)")
+                continue
+            client.add_sni_member(group, {"domain": wanted_domain, "domain-type": wanted_type, **base_changes})
+            created_domains.append(wanted_domain)
+            result.messages.append(f"SNI '{group}': Member '{wanted_domain}' ({wanted_type}) angelegt")
+            continue
+        for m in hits:
+            mid = member_id(m)
+            if mid in updated_ids:
+                continue
+            changes = dict(base_changes)
+            if str(get_field(m, "certificate-type", "")).lower() == "enable":
+                changes["certificate-type"] = "disable"
+            client.update_sni_member(group, m, changes)
+            updated_ids.add(mid)
+
+    # Verifikation
+    after = client.list_sni_members(group)
+    by_id = {member_id(m): m for m in after}
+    for mid in updated_ids:
+        if str(get_field(by_id.get(mid, {}), "local-cert", "")) != fw_cert:
             raise FortiWebError(f"Verifikation fehlgeschlagen: SNI {group}/{mid} referenziert nicht '{fw_cert}'")
-    result.messages.append(f"SNI '{group}': {len(hits)} Member -> '{fw_cert}'")
+    for domain in created_domains:
+        ok = any(
+            str(get_field(m, "domain", "")).lower() == domain.lower() and str(get_field(m, "local-cert", "")) == fw_cert
+            for m in after
+        )
+        if not ok:
+            raise FortiWebError(f"Verifikation fehlgeschlagen: SNI-Member '{domain}' in '{group}' fehlt oder falsch")
+    if updated_ids or created_domains:
+        result.messages.append(
+            f"SNI '{group}': {len(updated_ids)} Member aktualisiert, {len(created_domains)} angelegt -> '{fw_cert}'"
+        )
+
+    # SNI in den Policies aktivieren und die Gruppe eintragen
+    for policy in policies:
+        current = client.get_server_policy(policy)
+        if current is None:
+            raise FortiWebError(f"Server Policy '{policy}' existiert nicht auf FortiWeb")
+        changes = {}
+        if str(get_field(current, "sni", "")).lower() != "enable":
+            changes["sni"] = "enable"
+        if str(get_field(current, "sni-certificate", "")) != group:
+            changes["sni-certificate"] = group
+        if binding.strict is not None:
+            wanted = "enable" if binding.strict else "disable"
+            if str(get_field(current, "sni-strict", "")).lower() != wanted:
+                changes["sni-strict"] = wanted
+        if not changes:
+            continue
+        client.update_server_policy(policy, changes)
+        check = client.get_server_policy(policy) or {}
+        if str(get_field(check, "sni", "")).lower() != "enable" or str(get_field(check, "sni-certificate", "")) != group:
+            raise FortiWebError(f"Verifikation fehlgeschlagen: Policy '{policy}' hat SNI-Gruppe '{group}' nicht übernommen")
+        result.messages.append(f"Policy '{policy}': SNI aktiv mit Gruppe '{group}'")
 
 
 def deploy_certificate(
@@ -248,10 +324,12 @@ def deploy_certificate(
             fortiweb=target.fortiweb,
         )
 
-    for policy in target.server_policies:
-        bind_server_policy(client, policy, fw_name, inter_group, result)
+    if target.bind_default_certificate:
+        for policy in target.server_policies:
+            bind_server_policy(client, policy, fw_name, inter_group, result)
     for sni in target.sni:
-        bind_sni(client, sni.group, sni.domains, fw_name, inter_group, result)
+        policies = target.server_policies if sni.policies is None else sni.policies
+        bind_sni(client, sni, cert_cfg.domains, policies, fw_name, inter_group, result)
 
     # Alte Versionen aufräumen (neueste keep_old behalten)
     for old in old_certificates(target.cert_name_prefix, client.list_local_certificates(), fw_name)[target.keep_old :]:

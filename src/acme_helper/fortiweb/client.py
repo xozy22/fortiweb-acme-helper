@@ -344,8 +344,18 @@ class FortiWebClient:
     def get_sni_group(self, name: str) -> dict | None:
         return self._get_one("sni_group", name)
 
+    def create_sni_group(self, name: str) -> None:
+        self._request("POST", "sni_group", json=self._wrap({"name": name}))
+        log.info("FortiWeb: SNI-Gruppe '%s' angelegt", name)
+
     def list_sni_members(self, group: str) -> list[dict]:
         return self._list("sni_members", params={"mkey": group})
+
+    def add_sni_member(self, group: str, data: dict) -> dict:
+        """Legt einen SNI-Member an (domain, domain-type, local-cert, inter-group, ...)."""
+        res = self._request("POST", "sni_members", params={"mkey": group}, json=self._wrap(data))
+        log.info("FortiWeb: SNI-Member '%s' in '%s' angelegt", data.get("domain"), group)
+        return res if isinstance(res, dict) else {}
 
     def update_sni_member(self, group: str, member: dict, changes: dict) -> None:
         """Ändert einen SNI-Member über die Untertabelle (PUT ?mkey=<gruppe>&sub_mkey=<id>)."""

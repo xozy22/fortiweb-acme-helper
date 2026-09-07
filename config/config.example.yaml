@@ -51,9 +51,14 @@ certificates:
       - fortiweb: fw1
         cert_name_prefix: wc-example-com     # FortiWeb-Name wird <prefix>-<YYYYMMDD>
         chain_mode: intermediate-group       # intermediate-group | fullchain | none
-        server_policies: [policy-web]
-        sni:
-          - { group: sni-main, domains: ["*.example.com", "example.com"] }
+        server_policies: [policy-web]        # bekommen das Zertifikat als Default (certificate)
+        bind_default_certificate: true       # false: nur SNI, Feld "certificate" der Policy bleibt unangetastet
+        sni:                                 # mehrere Domains/Zertifikate in einer Policy (Advanced SSL Settings -> SNI)
+          - group: sni-main                  # wird angelegt, falls nicht vorhanden
+            domains: ["*.example.com", "example.com"]   # leer = Domains des Zertifikats; fehlende Member werden angelegt
+            policies: [policy-web]           # dort SNI aktivieren und die Gruppe setzen (Default: server_policies)
+            strict: false                    # sni-strict; weglassen = unverändert
+            wildcard: plain                  # plain: "*.example.com" als Domain; regex: als ^[^.]+\.example\.com$
         keep_old: 1
 
   - name: wildcard-strato
