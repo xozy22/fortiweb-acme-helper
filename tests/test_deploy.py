@@ -50,7 +50,16 @@ class FakeFortiWeb:
         return self.groups[group]
 
     def add_intermediate_group_member(self, group, cert):
-        self.groups[group].append({"id": len(self.groups[group]) + 1, "name": cert})
+        self.groups[group].append({"id": str(len(self.groups[group]) + 1), "name": cert})
+
+    def delete_intermediate_group_member(self, group, member_id):
+        self.groups[group] = [m for m in self.groups[group] if str(m["id"]) != str(member_id)]
+
+    def delete_intermediate_certificate(self, name):
+        for g in self.groups.values():
+            if any(m["name"] == name for m in g):
+                raise FortiWebError("still referenced")
+        self.inter.remove(name)
 
     def get_server_policy(self, name):
         return dict(self.policies[name]) if name in self.policies else None

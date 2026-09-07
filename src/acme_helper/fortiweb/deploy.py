@@ -15,7 +15,7 @@ from cryptography.hazmat.primitives import hashes
 from ..config import Config, CertificateConfig, DeployTarget
 from ..errors import FortiWebError
 from ..state import DeployState
-from .client import FortiWebClient, get_field
+from .client import FortiWebClient, get_field, member_id
 
 log = logging.getLogger(__name__)
 
@@ -127,6 +127,29 @@ def ensure_intermediate_group(
         if name not in present:
             client.add_intermediate_group_member(group, name)
             result.messages.append(f"'{name}' in Gruppe '{group}' aufgenommen")
+    # Die Gruppe gehört acme-helper: Member, die nicht zur aktuellen Kette gehören, fliegen raus
+    # (z.B. Staging-Intermediates nach dem Wechsel auf Produktion).
+    for m in members:
+        name = str(get_field(m, "name", ""))
+        if name and name not in wanted:
+            try:
+                client.delete_intermediate_group_member(group, member_id(m))
+                result.messages.append(f"'{name}' aus Gruppe '{group}' entfernt")
+            except FortiWebError as exc:
+                result.warnings.append(f"Member '{name}' konnte nicht aus '{group}' entfernt werden: {exc}")
+    # Selbst hochgeladene Intermediates, die keine Kette mehr braucht, wieder löschen
+    if state:
+        for fp, name in list(state.intermediates(fortiweb).items()):
+            if name in wanted:
+                continue
+            if name in existing_names:
+                try:
+                    client.delete_intermediate_certificate(name)
+                    result.messages.append(f"Intermediate '{name}' gelöscht (nicht mehr benötigt)")
+                except FortiWebError as exc:
+                    result.warnings.append(f"Intermediate '{name}' konnte nicht gelöscht werden (noch referenziert?): {exc}")
+                    continue
+            state.forget_intermediate(fortiweb, fp)
     return group
 
 

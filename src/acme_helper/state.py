@@ -77,6 +77,13 @@ class DeployState:
         self._data.setdefault("_intermediates", {}).setdefault(fortiweb, {})[fingerprint] = fw_name
         _atomic_write(self.path, self._data)
 
+    def intermediates(self, fortiweb: str) -> dict[str, str]:
+        return dict(self._data.get("_intermediates", {}).get(fortiweb, {}))
+
+    def forget_intermediate(self, fortiweb: str, fingerprint: str) -> None:
+        self._data.get("_intermediates", {}).get(fortiweb, {}).pop(fingerprint, None)
+        _atomic_write(self.path, self._data)
+
 
 class PendingTxtState:
     """pending_txt.json: TXT-Records, die im laufenden certbot-Lauf gesetzt wurden.
