@@ -1,0 +1,73 @@
+# acme-helper Konfiguration. Nach config/config.yaml kopieren.
+# Secrets stehen NIE hier, sondern in .env; hier werden nur die Variablennamen referenziert (*_env).
+
+acme:
+  email: admin@example.com
+  staging: true              # Zuerst mit Staging testen, dann auf false stellen und neu ausstellen
+  key_type: ecdsa            # ecdsa | rsa
+  propagation_timeout: 300   # Sekunden, bis TXT-Records auf allen autoritativen NS sichtbar sein müssen
+  propagation_interval: 10
+
+dns_providers:
+  cf:
+    type: cloudflare
+    api_token_env: CF_API_TOKEN          # Token mit Zone:DNS:Edit + Zone:Zone:Read
+  dode:
+    type: dode
+    token_env: DODE_TOKEN                # Let's-Encrypt-Token aus my.do.de
+  strato:
+    type: strato                         # Nur nötig ohne CNAME-Delegation
+    username_env: STRATO_USER
+    password_env: STRATO_PASS
+    totp_secret_env: STRATO_TOTP_SECRET  # leer lassen, wenn kein 2FA
+    totp_devicename: acme-helper         # Name des TOTP-Geräts im Strato-Login
+    api_url: https://www.strato.de/apps/CustomerService
+    propagation_timeout: 900
+
+# Welche Zone von welchem Provider verwaltet wird. Gematcht wird gegen den ENDGÜLTIGEN Namen
+# nach CNAME-Auflösung, längster Suffix gewinnt.
+zones:
+  - { suffix: example.com,        provider: cf }
+  - { suffix: acme.example.net,   provider: dode }    # Delegationsziel: _acme-challenge.strato-domain.de CNAME _acme-challenge.strato-domain.de.acme.example.net
+  - { suffix: legacy-strato.de,   provider: strato }  # Strato-Domain ohne Delegation
+
+fortiwebs:
+  fw1:
+    host: 10.0.0.5
+    port: 8443                 # HTTPS-Admin-Port der FortiWeb
+    username_env: FW1_USER
+    password_env: FW1_PASS
+    vdom: root
+    verify_tls: false          # oder Pfad zu einem CA-Bundle, z.B. /config/fortiweb-ca.pem
+    import_method: multipart   # multipart (dokumentiert) | json (certificate.local.json_cert)
+    body_wrapper: data         # {"data": {...}} bei PUT/POST auf cmdb-Endpunkte; "none" für rohe Objekte
+    # endpoints:               # Nur bei Abweichungen der Firmware überschreiben, siehe README
+    #   inter_cert_import: /api/v2.0/system/certificate.intermediate_ca.import_certificate
+
+certificates:
+  - name: wildcard-example-com
+    domains: ["example.com", "*.example.com"]
+    deploy:
+      - fortiweb: fw1
+        cert_name_prefix: wc-example-com     # FortiWeb-Name wird <prefix>-<YYYYMMDD>
+        chain_mode: intermediate-group       # intermediate-group | fullchain | none
+        server_policies: [policy-web]
+        sni:
+          - { group: sni-main, domains: ["*.example.com", "example.com"] }
+        keep_old: 1
+
+  - name: wildcard-strato
+    domains: ["*.legacy-strato.de", "legacy-strato.de"]
+    deploy:
+      - fortiweb: fw1
+        cert_name_prefix: wc-legacy-strato
+        server_policies: [policy-legacy]
+
+schedule:
+  time: "03:30"
+  timezone: Europe/Berlin
+
+notify:
+  webhook_url_env: NOTIFY_WEBHOOK   # optional: generischer JSON-POST (Slack/Teams/ntfy/eigener Endpunkt)
+  on_success: true
+  on_failure: true

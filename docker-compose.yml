@@ -1,0 +1,16 @@
+services:
+  acme-helper:
+    build: .
+    image: acme-helper:local
+    container_name: acme-helper
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - ./config:/config:ro
+      - acme-data:/data
+    # Einzellauf: docker compose run --rm acme-helper run --once
+    # Check:      docker compose run --rm acme-helper check
+    command: ["run"]
+
+volumes:
+  acme-data:

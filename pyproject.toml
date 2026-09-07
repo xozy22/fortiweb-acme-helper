@@ -1,0 +1,36 @@
+[project]
+name = "acme-helper"
+version = "0.1.0"
+description = "ACME DNS-01 automation for FortiWeb with Cloudflare, do.de and Strato"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+dependencies = [
+    "certbot>=3.0",
+    "requests>=2.32",
+    "pyyaml>=6.0",
+    "pydantic>=2.7",
+    "dnspython>=2.6",
+    "pyotp>=2.9",
+    "beautifulsoup4>=4.12",
+    "cryptography>=42",
+    "tzdata>=2024.1",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "responses>=0.25"]
+
+[project.scripts]
+acme-helper = "acme_helper.cli:main"
+acme-helper-auth-hook = "acme_helper.hooks.auth:main"
+acme-helper-cleanup-hook = "acme_helper.hooks.cleanup:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
