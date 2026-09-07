@@ -48,6 +48,7 @@ def test_strato_page_hints():
 @responses.activate
 def test_intermediate_endpoint_discovery():
     err = {"results": {"errcode": "-20001", "message": "The REST API has invalid URL."}}
+    responses.get(f"{BASE}/api/v2.0/system/certificate.intermediateca", json=err, status=500)
     responses.get(f"{BASE}/api/v2.0/system/certificate.intermediate_ca", json=err, status=500)
     responses.get(f"{BASE}/api/v2.0/system/certificate.intermediate-certificate",
                   json={"results": [{"name": "le-abc"}]})
@@ -62,7 +63,8 @@ def test_intermediate_endpoint_discovery():
 @responses.activate
 def test_intermediate_discovery_all_fail():
     err = {"results": {"errcode": "-20001", "message": "invalid URL"}}
-    for path in ("/api/v2.0/system/certificate.intermediate_ca", "/api/v2.0/system/certificate.intermediate-certificate",
+    for path in ("/api/v2.0/system/certificate.intermediateca", "/api/v2.0/system/certificate.intermediate_ca",
+                 "/api/v2.0/system/certificate.intermediate-certificate",
                  "/api/v2.0/system/certificate.intermediate", "/api/v2.0/system/certificate.intermediate-ca",
                  "/api/v2.0/system/certificate.intermediateca", "/api/v2.0/cmdb/system/certificate.intermediate-certificate",
                  "/api/v2.0/cmdb/system/certificate.intermediate_ca"):

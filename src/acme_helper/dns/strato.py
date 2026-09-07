@@ -15,9 +15,11 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import urljoin, urlparse
 
 import pyotp
 import requests
@@ -55,8 +57,13 @@ class StratoClient:
         self.totp_devicename = totp_devicename
         self.debug_dir = debug_dir
         self.http = session or requests.Session()
-        self.http.headers.setdefault(
-            "User-Agent", "Mozilla/5.0 (X11; Linux x86_64) acme-helper/1.0"
+        # Browser-ähnliche Header: Strato behandelt "python-requests" anders als einen Browser
+        self.http.headers.update(
+            {
+                "User-Agent": "Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Accept-Language": "de-DE,de;q=0.9,en;q=0.5",
+            }
         )
         self.session_id: str | None = None
 
@@ -119,6 +126,27 @@ class StratoClient:
             raise DnsError(f"Strato nicht erreichbar: {exc}") from exc
 
     # --- Login -------------------------------------------------------------
+    login_delay = 2.0  # Strato lehnt den POST ab, wenn er zu schnell auf den GET folgt (strato-certbot #46)
+
+    def _find_form(self, html: str, field: str, base_url: str) -> tuple[str, dict[str, str]]:
+        """Sucht das Formular, das ein Eingabefeld `field` enthält.
+
+        Liefert die absolute Action-URL (bei Strato inkl. sessionID) und alle versteckten Felder,
+        damit der POST genauso aussieht wie aus dem Browser.
+        """
+        soup = BeautifulSoup(html, "html.parser")
+        for form in soup.find_all("form"):
+            if form.find("input", {"name": field}) is None:
+                continue
+            action = form.get("action") or base_url
+            hidden = {
+                inp["name"]: inp.get("value", "")
+                for inp in form.find_all("input", {"type": "hidden"})
+                if inp.get("name")
+            }
+            return urljoin(base_url, action), hidden
+        return base_url, {}
+
     def _login_2fa(self, response: requests.Response) -> requests.Response:
         soup = BeautifulSoup(response.text, "html.parser")
         if soup.find("h1", string=re.compile("Zwei-Faktor-Authentifizierung")) is None:
@@ -142,32 +170,59 @@ class StratoClient:
         if pw_id is None:
             self._dump("2fa-device", response.text)
             raise DnsError("Strato-2FA-Seite: kein Gerät (pw_id) gefunden")
+        action, hidden = self._find_form(response.text, "totp_token", response.url)
         code = pyotp.TOTP(self.totp_secret).now()
-        return self._post(
-            {
-                "identifier": self.username,
-                "action_customer_login.x": 1,
-                "totp_token": token_input["value"],
-                "pw_id": pw_id,
-                "totp": code,
-            }
-        )
+        data = {
+            **hidden,
+            "identifier": self.username,
+            "action_customer_login.x": 1,
+            "totp_token": token_input["value"],
+            "pw_id": pw_id,
+            "totp": code,
+        }
+        try:
+            return self.http.post(action, data=data, timeout=60, headers={"Referer": response.url})
+        except requests.RequestException as exc:
+            raise DnsError(f"Strato nicht erreichbar: {exc}") from exc
 
     def login(self) -> None:
-        self._get({})  # Cookies holen
-        response = self._post(
-            {"identifier": self.username, "passwd": self.password, "action_customer_login.x": "Login"}
-        )
+        page = self._get({})  # Login-Seite: Cookies, Formular-Action mit sessionID, versteckte Felder
+        action, hidden = self._find_form(page.text, "identifier", page.url)
+        if "sessionID" not in action:
+            log.warning("Strato: Login-Formular ohne sessionID in der Action gefunden (%s)", action)
+        if self.login_delay:
+            time.sleep(self.login_delay)
+        data = {
+            **hidden,
+            "identifier": self.username,
+            "passwd": self.password,
+            "action_customer_login.x": "Login",
+        }
+        try:
+            response = self.http.post(
+                action,
+                data=data,
+                timeout=60,
+                headers={"Referer": page.url, "Origin": "https://" + urlparse(page.url).netloc},
+            )
+        except requests.RequestException as exc:
+            raise DnsError(f"Strato nicht erreichbar: {exc}") from exc
         response = self._login_2fa(response)
         match = re.search(r"sessionID=([^&]+)", response.url)
-        if not match:
+        if not match or self._is_login_page(response.text):
             self._dump("login", response.text)
             raise DnsError(
-                f"Strato-Login fehlgeschlagen (keine sessionID in der Antwort-URL, HTTP {response.status_code}, "
-                f"URL {response.url[:120]}). Hinweise im Log oberhalb, HTML unter /data/debug."
+                f"Strato-Login fehlgeschlagen (HTTP {response.status_code}, URL {response.url[:120]}). "
+                "Zugangsdaten prüfen (Kundennummer statt E-Mail), Konto im Browser auf Captcha/Sperre prüfen. "
+                "Hinweise im Log oberhalb, HTML unter /data/debug."
             )
         self.session_id = match.group(1)
         log.info("Strato: Login erfolgreich")
+
+    @staticmethod
+    def _is_login_page(html: str) -> bool:
+        soup = BeautifulSoup(html, "html.parser")
+        return soup.find("input", {"name": "passwd"}) is not None
 
     # --- Pakete / Domains --------------------------------------------------
     def list_packages(self) -> list[tuple[str, str]]:

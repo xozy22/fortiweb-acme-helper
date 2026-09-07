@@ -1,9 +1,31 @@
+import pytest
 import responses
 
 from acme_helper.config import StratoProvider
-from acme_helper.dns.strato import StratoDns, TxtRecord
+from acme_helper.dns.strato import StratoClient, StratoDns, TxtRecord
 
 API = "https://www.strato.de/apps/CustomerService"
+
+# Echte Struktur der Login-Seite (Stand 09/2026): Action mit sessionID, verstecktes Feld, Submit-Name
+LOGIN_HTML = """
+<html><head><title>STRATO Kunden-Login</title></head><body>
+<form id="ksbLogin" method="post" action="/apps/CustomerService?sessionID=S0">
+  <input type="text" name="identifier" placeholder="Benutzername oder Kundennummer">
+  <input type="password" name="passwd">
+  <input type="hidden" name="login_success_query_params" value="x=1">
+  <input type="submit" name="action_customer_login.x" value="Login">
+</form>
+<form name="reset_password_form" action="/apps/ChangePassword" method="post">
+  <input type="text" name="identifier"><input type="email" name="email">
+</form>
+</body></html>
+"""
+
+
+@pytest.fixture(autouse=True)
+def _no_login_delay(monkeypatch):
+    monkeypatch.setattr(StratoClient, "login_delay", 0)
+
 
 LOGIN_2FA_HTML = """
 <html><body><h1>Zwei-Faktor-Authentifizierung</h1>
@@ -38,7 +60,7 @@ RECORDS_HTML = """
 
 
 def _register_login(with_2fa: bool):
-    responses.get(API, body="<html>login</html>")
+    responses.get(API, body=LOGIN_HTML)
     if with_2fa:
         responses.post(API, body=LOGIN_2FA_HTML)  # erster POST: Passwort -> 2FA-Seite
         responses.post(API, status=302, headers={"Location": f"{API}?sessionID=S1&cID=0"})
@@ -64,6 +86,12 @@ def test_add_txt_with_2fa(env, monkeypatch, tmp_path):
                   debug_dir=tmp_path)
     p.add_txt("_acme-challenge.legacy-strato.de", "new-value")
 
+    # Login-POST geht an die Form-Action (mit sessionID) und enthält das versteckte Feld
+    login_post = [c for c in responses.calls if c.request.method == "POST"][0]
+    assert login_post.request.url == f"{API}?sessionID=S0"
+    assert "login_success_query_params=x%3D1" in login_post.request.body
+    assert "identifier=12345" in login_post.request.body and "action_customer_login.x=Login" in login_post.request.body
+    assert login_post.request.headers["Referer"] == API
     # 2FA-POST enthält Gerät 7 und ein TOTP
     twofa = [c for c in responses.calls if c.request.method == "POST"][1]
     assert "pw_id=7" in twofa.request.body and "totp_token=tok123" in twofa.request.body
@@ -92,6 +120,18 @@ def test_locate_subdomain(env, tmp_path):
     p = StratoDns("strato", StratoProvider(type="strato", username_env="STRATO_USER", password_env="STRATO_PASS"))
     c = p.client()
     assert c.locate("_acme-challenge.app.legacy-strato.de") == ("4711", "legacy-strato.de", "_acme-challenge.app")
+
+
+@responses.activate
+def test_login_page_returned_again_is_failure(env, tmp_path):
+    """Strato antwortet bei falschen Daten mit HTTP 200 und derselben Login-Seite."""
+    responses.get(API, body=LOGIN_HTML)
+    responses.post(API, body=LOGIN_HTML)
+    p = StratoDns("strato", StratoProvider(type="strato", username_env="STRATO_USER", password_env="STRATO_PASS"),
+                  debug_dir=tmp_path)
+    with pytest.raises(Exception, match="Kundennummer statt E-Mail"):
+        p.client()
+    assert list(tmp_path.glob("strato-login-*.html"))
 
 
 def test_txtrecord_dataclass():

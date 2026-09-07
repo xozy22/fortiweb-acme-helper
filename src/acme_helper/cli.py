@@ -304,7 +304,7 @@ def cmd_check(cfg: Config, args: argparse.Namespace) -> int:
             continue
         if args.probe:
             for key, status in client.probe_endpoints().items():
-                (ok if status == "ok" else fail)(f"{name}: Endpunkt {key}: {status}")
+                (ok if status.startswith("ok") else fail)(f"{name}: Endpunkt {key}: {status}")
         for cert in cfg.certificates:
             for t in cert.deploy:
                 if t.fortiweb != name:

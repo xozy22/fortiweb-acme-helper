@@ -88,7 +88,9 @@ Challenge-Eintrag ergänzen und die komplette Liste zurückschreiben.
 
 ### Was du brauchst
 
-- **Kundennummer** oder Login-Name und **Passwort** des Strato-Kontos.
+- **Kundennummer** oder **Benutzername** und das **Passwort** des Strato-Kontos. Das Login-Feld heißt bei Strato
+  „Benutzername oder Kundennummer“; die E-Mail-Adresse funktioniert dort **nicht**. Die Kundennummer steht oben
+  im Kundenlogin und auf jeder Rechnung.
 - Falls Zwei-Faktor-Authentifizierung aktiv ist: das **TOTP-Secret** (Base32-String) und den **Gerätenamen**,
   wie er im Strato-Login in der Geräteauswahl erscheint.
 

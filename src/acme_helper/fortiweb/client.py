@@ -25,9 +25,9 @@ DEFAULT_ENDPOINTS: dict[str, str] = {
     "local_cert": "/api/v2.0/system/certificate.local",
     "local_cert_import": "/api/v2.0/system/certificate.local.import_certificate",
     "local_cert_json": "/api/v2.0/system/certificate.local.json_cert",
-    # Intermediate-CA-Zertifikate und Gruppen
-    "inter_cert": "/api/v2.0/system/certificate.intermediate_ca",
-    "inter_cert_import": "/api/v2.0/system/certificate.intermediate_ca.import_certificate",
+    # Intermediate-CA-Zertifikate und Gruppen (Pfad auf FortiWeb 8.0.7 bestätigt)
+    "inter_cert": "/api/v2.0/system/certificate.intermediateca",
+    "inter_cert_import": "/api/v2.0/system/certificate.intermediateca.import_certificate",
     "inter_group": "/api/v2.0/cmdb/system/certificate.intermediate-certificate-group",
     "inter_group_members": "/api/v2.0/cmdb/system/certificate.intermediate-certificate-group/members",
     # Server Policy und SNI
@@ -39,11 +39,11 @@ DEFAULT_ENDPOINTS: dict[str, str] = {
 # Der Pfad für Intermediate-CA-Zertifikate ist nicht für jede Firmware belegt; diese Kandidaten werden
 # beim ersten Zugriff der Reihe nach probiert (GET), der erste ohne Fehler wird verwendet.
 INTER_CERT_CANDIDATES = [
+    "/api/v2.0/system/certificate.intermediateca",
     "/api/v2.0/system/certificate.intermediate_ca",
     "/api/v2.0/system/certificate.intermediate-certificate",
     "/api/v2.0/system/certificate.intermediate",
     "/api/v2.0/system/certificate.intermediate-ca",
-    "/api/v2.0/system/certificate.intermediateca",
     "/api/v2.0/cmdb/system/certificate.intermediate-certificate",
     "/api/v2.0/cmdb/system/certificate.intermediate_ca",
 ]
