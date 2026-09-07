@@ -1,3 +1,3 @@
 """ACME Helper: DNS-01-Zertifikate für FortiWeb automatisieren."""
 
-__version__ = "0.1.4"
+__version__ = "0.1.5"

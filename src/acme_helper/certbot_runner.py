@@ -26,7 +26,15 @@ def certbot_executable() -> str:
 
 
 def hook_command(module: str) -> str:
-    return f'"{sys.executable}" -m acme_helper.hooks.{module}'
+    """certbot validiert das erste Wort des Hook-Befehls per PATH-Suche, daher ohne Anführungszeichen.
+
+    Bevorzugt die installierten Konsolenskripte (acme-helper-auth-hook / -cleanup-hook),
+    sonst der Python-Interpreter mit -m.
+    """
+    script = shutil.which(f"acme-helper-{module}-hook")
+    if script:
+        return script
+    return f"{sys.executable} -m acme_helper.hooks.{module}"
 
 
 def lineage_fingerprint(cfg: Config, name: str) -> str | None:
